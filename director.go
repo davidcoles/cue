@@ -331,7 +331,11 @@ func (d *Director) Status() (services []Service) {
 
 	return d.status()
 }
-
+func (d *Director) Trigger() {
+	d.mutex.Lock()
+	defer d.mutex.Unlock()
+	d.update()
+}
 func (d *Director) update() {
 	d.balancer().Configure(d.status())
 	d.inform()

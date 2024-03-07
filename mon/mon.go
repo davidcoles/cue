@@ -207,7 +207,7 @@ func updown(b bool) string {
 func (m *Mon) monitor(vip, rip netip.Addr, port uint16, state *state, c Checks) chan Checks {
 	C := make(chan Checks, 10)
 
-	m.log().INFO(F, KV{"vip": vip, "rip": rip, "port": port, "event": "start", "state": updown(state.status.OK)})
+	m.log().NOTICE(F, KV{"vip": vip, "rip": rip, "port": port, "event": "start", "state": updown(state.status.OK)})
 
 	go func() {
 
@@ -260,7 +260,7 @@ func (m *Mon) monitor(vip, rip netip.Addr, port uint16, state *state, c Checks) 
 				var changed bool
 				if !was.Initialised || was.OK != now.OK {
 					if was.Initialised {
-						m.log().INFO(F, KV{"vip": vip, "rip": rip, "port": port, "event": "state-change", "state": updown(now.OK)})
+						m.log().NOTICE(F, KV{"vip": vip, "rip": rip, "port": port, "event": "state-change", "state": updown(now.OK)})
 					}
 					changed = true
 					now.When = t
