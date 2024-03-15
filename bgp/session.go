@@ -34,21 +34,23 @@ const (
 )
 
 type Status struct {
-	State             string
+	State             string        `json:"state"`
+	When              time.Time     `json:"when"`
+	Duration          time.Duration `json:"duration_s"`
 	UpdateCalculation time.Duration `json:"update_calculation_ms"`
-	Advertised        uint64
-	Withdrawn         uint64
-	Prefixes          int
-	Attempts          uint64
-	Connections       uint64
-	Established       uint64
-	LastError         string
-	HoldTime          uint16
-	LocalASN          uint16
-	RemoteASN         uint16
-	EBGP              bool
-	AdjRIBOut         []string
-	LocalIP           string
+	Advertised        uint64        `json:"advertised_routes"`
+	Withdrawn         uint64        `json:"withdrawn_routes"`
+	Prefixes          int           `json:"current_routes"`
+	Attempts          uint64        `json:"connection_attempts"`
+	Connections       uint64        `json:"successful_connections"`
+	Established       uint64        `json:"established_sessions"`
+	LastError         string        `json:"last_error"`
+	HoldTime          uint16        `json:"hold_time"`
+	LocalASN          uint16        `json:"local_asn"`
+	RemoteASN         uint16        `json:"remote_asn"`
+	AdjRIBOut         []string      `json:"adj_rib_out"`
+	LocalIP           string        `json:"local_ip"`
+	//EBGP              bool          `json:""`
 }
 
 const (
@@ -78,6 +80,7 @@ func NewSession(id IP, peer string, p Parameters, r []IP, l logger) *Session {
 func (s *Session) Status() Status {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
+	s.status.Duration = time.Now().Sub(s.status.When) / time.Second
 	return s.status
 }
 
@@ -95,10 +98,16 @@ func (s *Session) Close() {
 	close(s.c)
 }
 
+func (s *Session) state2(state string) {
+	s.status.State = state
+	s.status.When = time.Now().Round(time.Second)
+}
+
 func (s *Session) state(state string) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
-	s.status.State = state
+	//s.status.State = state
+	s.state2(state)
 }
 
 func (s *Session) error(error string) string {
@@ -111,20 +120,22 @@ func (s *Session) error(error string) string {
 func (s *Session) established(ht uint16, local, remote uint16) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
-	s.status.State = ESTABLISHED
+	//s.status.State = ESTABLISHED
+	s.state2(ESTABLISHED)
 	s.status.Established++
 	s.status.LastError = ""
 	s.status.HoldTime = ht
 	s.status.LocalASN = local
 	s.status.RemoteASN = remote
-	s.status.EBGP = local != remote
+	//s.status.EBGP = local != remote
 }
 
 func (s *Session) active(ht uint16, local uint16, ip [4]byte) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
-	s.status.State = ACTIVE
+	//s.status.State = ACTIVE
+	s.state2(ACTIVE)
 	s.status.Attempts++
 
 	s.status.AdjRIBOut = nil
@@ -134,13 +145,14 @@ func (s *Session) active(ht uint16, local uint16, ip [4]byte) {
 	s.status.HoldTime = ht
 	s.status.LocalASN = local
 	s.status.RemoteASN = 0
-	s.status.EBGP = false
+	//s.status.EBGP = false
 	s.status.LocalIP = ip_string(ip)
 }
 func (s *Session) connect() {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
-	s.status.State = CONNECT
+	//s.status.State = CONNECT
+	s.state2(CONNECT)
 	s.status.Connections++
 }
 
@@ -216,7 +228,8 @@ func (s *Session) session(id IP, peer string) chan Update {
 func (s *Session) idle() {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
-	s.status.State = IDLE
+	//s.status.State = IDLE
+	s.state2(IDLE)
 }
 
 func (s *Session) try(routerid IP, peer string, updates chan Update) (bool, notification) {
@@ -250,7 +263,11 @@ func (s *Session) try(routerid IP, peer string, updates chan Update) (bool, noti
 		return false, local(INVALID_LOCALIP, err.Error())
 	}
 
-	s.active(holdtime, asnumber, localip)
+	//s.active(holdtime, asnumber, localip) // locks mutex
+	s.mutex.Lock()
+	s.status.HoldTime = holdtime
+	s.status.LocalIP = ip_string(localip)
+	s.mutex.Unlock()
 
 	nexthop := localip
 
