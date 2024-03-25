@@ -366,12 +366,60 @@ func (m *Mon) Probes(vip, rip netip.Addr, port uint16, checks Checks) (bool, str
 
 		ok, s := m.prober.Probe(vip, rip, c)
 
+		m.log().DEBUG("probe", probeLog(vip, rip, port, c, ok, s))
+
 		if !ok {
 			return ok, c.Type + ": " + s
 		}
 	}
 
 	return true, "OK"
+}
+
+func probeLog(vip, rip netip.Addr, port uint16, c Check, ok bool, s string) map[string]any {
+
+	// virtual ip/port/protocol, real ip/port, check port
+
+	kv := map[string]any{
+		"vip":        vip.String(),
+		"rip":        rip.String(),
+		"port":       port,
+		"rport":      c.Port,
+		"type":       c.Type,
+		"status":     updown(ok),
+		"diagnostic": s,
+	}
+
+	switch c.Type {
+	case "dns":
+		if c.Method {
+			kv["method"] = "tcp"
+		} else {
+			kv["method"] = "udp"
+		}
+	case "http":
+		fallthrough
+	case "https":
+		if c.Method {
+			kv["method"] = "GET"
+		} else {
+			kv["method"] = "HEAD"
+		}
+
+		if c.Host != "" {
+			kv["host"] = c.Host
+		}
+
+		if c.Path != "" {
+			kv["path"] = c.Path
+		}
+
+		if len(c.Expect) > 0 {
+			kv["expect"] = fmt.Sprintf("%v", c.Expect)
+		}
+	}
+
+	return kv
 }
 
 func (m *Mon) Probe(vip, addr netip.Addr, c Check) (ok bool, s string) {
