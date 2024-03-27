@@ -28,13 +28,7 @@ import (
 	"net/netip"
 	"sync"
 	"time"
-
-	"github.com/davidcoles/cue/log"
 )
-
-const F = "mon"
-
-type KV = map[string]any
 
 var client *http.Client
 
@@ -102,31 +96,28 @@ type Status struct {
 	Initialised bool
 }
 
+type Prober interface {
+	Probe(*Mon, Instance, Check) (bool, string)
+}
+
+type Notifier interface {
+	Notify(Instance, bool)
+}
+
 type Mon struct {
 	C        chan bool
 	services map[Instance]*state
 	syn      *SYN
 	prober   Prober
-	logger   log.Log
+	notifier Notifier
 }
 
-func (m *Mon) log() log.Log {
-	l := m.logger
+func New(addr netip.Addr, services map[Instance]Target, helper any) (*Mon, error) {
 
-	if l != nil {
-		return l
-	}
+	notifier, _ := helper.(Notifier)
+	prober, _ := helper.(Prober)
 
-	return log.Nil{}
-}
-
-func New(addr netip.Addr, services map[Instance]Target, p Prober, l log.Log) (*Mon, error) {
-
-	m := &Mon{C: make(chan bool, 1), services: make(map[Instance]*state), prober: p, logger: l}
-
-	if m.prober == nil {
-		m.prober = prober{m: m}
-	}
+	m := &Mon{C: make(chan bool, 1), services: make(map[Instance]*state), prober: prober, notifier: notifier}
 
 	var nul netip.Addr
 	if addr != nul {
@@ -187,7 +178,7 @@ func (m *Mon) Update(checks map[Instance]Target) {
 
 	for instance, c := range checks {
 		state := &state{status: status{OK: c.Init, Diagnostic: "Initialising ...", When: time.Now()}}
-		state.checks = m.monitor(instance.Service.Address, instance.Destination.Address, instance.Destination.Port, state, c.Checks)
+		state.checks = m.monitor(instance, state, c.Checks)
 		m.services[instance] = state
 	}
 
@@ -197,17 +188,17 @@ func (m *Mon) Update(checks map[Instance]Target) {
 	}
 }
 
-func updown(b bool) string {
-	if b {
-		return "up"
+func (m *Mon) notify(instance Instance, state bool) {
+	if m.notifier != nil {
+		m.notifier.Notify(instance, state)
 	}
-	return "down"
 }
 
-func (m *Mon) monitor(vip, rip netip.Addr, port uint16, state *state, c Checks) chan Checks {
+func (m *Mon) monitor(instance Instance, state *state, c Checks) chan Checks {
+
 	C := make(chan Checks, 10)
 
-	m.log().NOTICE(F, KV{"vip": vip, "rip": rip, "port": port, "event": "start", "state": updown(state.status.OK)})
+	m.notify(instance, state.status.OK)
 
 	go func() {
 
@@ -231,7 +222,7 @@ func (m *Mon) monitor(vip, rip netip.Addr, port uint16, state *state, c Checks) 
 
 				t := time.Now()
 
-				ok, now.Diagnostic = m.Probes(vip, rip, port, c)
+				ok, now.Diagnostic = m.probes(instance, c)
 
 				copy(history[0:], history[1:])
 				history[4] = ok
@@ -260,7 +251,7 @@ func (m *Mon) monitor(vip, rip netip.Addr, port uint16, state *state, c Checks) 
 				var changed bool
 				if !was.Initialised || was.OK != now.OK {
 					if was.Initialised {
-						m.log().NOTICE(F, KV{"vip": vip, "rip": rip, "port": port, "event": "state-change", "state": updown(now.OK)})
+						m.notify(instance, now.OK)
 					}
 					changed = true
 					now.When = t
@@ -345,28 +336,20 @@ func (m *method) UnmarshalJSON(data []byte) error {
 	return errors.New("Badly formed method: " + s)
 }
 
-type Prober interface {
-	Probe(netip.Addr, netip.Addr, Check) (bool, string)
-}
-
-type prober struct {
-	m *Mon
-}
-
-func (p prober) Probe(vip, rip netip.Addr, check Check) (bool, string) {
-	return p.m.Probe(vip, rip, check)
-}
-
-func (m *Mon) Probes(vip, rip netip.Addr, port uint16, checks Checks) (bool, string) {
+func (m *Mon) probes(i Instance, checks Checks) (ok bool, s string) {
 	for _, c := range checks {
 
 		if c.Port == 0 {
-			c.Port = port
+			c.Port = i.Destination.Port
 		}
 
-		ok, s := m.prober.Probe(vip, rip, c)
+		p := m.prober
 
-		m.log().DEBUG("probe", probeLog(vip, rip, port, c, ok, s))
+		if p != nil {
+			ok, s = p.Probe(m, i, c)
+		} else {
+			ok, s = m.Probe(i.Destination.Address, c)
+		}
 
 		if !ok {
 			return ok, c.Type + ": " + s
@@ -376,53 +359,7 @@ func (m *Mon) Probes(vip, rip netip.Addr, port uint16, checks Checks) (bool, str
 	return true, "OK"
 }
 
-func probeLog(vip, rip netip.Addr, port uint16, c Check, ok bool, s string) map[string]any {
-
-	// virtual ip/port/protocol, real ip/port, check port
-
-	kv := map[string]any{
-		"vip":        vip.String(),
-		"rip":        rip.String(),
-		"port":       port,
-		"rport":      c.Port,
-		"type":       c.Type,
-		"status":     updown(ok),
-		"diagnostic": s,
-	}
-
-	switch c.Type {
-	case "dns":
-		if c.Method {
-			kv["method"] = "tcp"
-		} else {
-			kv["method"] = "udp"
-		}
-	case "http":
-		fallthrough
-	case "https":
-		if c.Method {
-			kv["method"] = "GET"
-		} else {
-			kv["method"] = "HEAD"
-		}
-
-		if c.Host != "" {
-			kv["host"] = c.Host
-		}
-
-		if c.Path != "" {
-			kv["path"] = c.Path
-		}
-
-		if len(c.Expect) > 0 {
-			kv["expect"] = fmt.Sprintf("%v", c.Expect)
-		}
-	}
-
-	return kv
-}
-
-func (m *Mon) Probe(vip, addr netip.Addr, c Check) (ok bool, s string) {
+func (m *Mon) Probe(addr netip.Addr, c Check) (ok bool, s string) {
 	switch c.Type {
 	case "http":
 		ok, s = m.HTTP(addr, c.Port, false, bool(c.Method), c.Host, c.Path, c.Expect...)
@@ -483,9 +420,6 @@ func (m *Mon) HTTP(addr netip.Addr, port uint16, https bool, head bool, host, pa
 		path = path[1:]
 	}
 
-	ex := fmt.Sprintf("%v", expect)
-	kv := KV{"addr": addr.String(), "port": port, "scheme": scheme, "method": method, "host": host, "path": path, "expect": ex}
-
 	if port == 0 {
 		return false, "Port is 0"
 	}
@@ -494,8 +428,6 @@ func (m *Mon) HTTP(addr netip.Addr, port uint16, https bool, head bool, host, pa
 	req, err := http.NewRequest(method, url, nil)
 
 	if err != nil {
-		kv["error"] = err.Error()
-		m.log().DEBUG("PROBE", kv)
 		return false, err.Error()
 	}
 
@@ -522,11 +454,6 @@ func (m *Mon) HTTP(addr netip.Addr, port uint16, https bool, head bool, host, pa
 			return true, resp.Status
 		}
 	}
-
-	kv["code"] = resp.Status
-	kv["error"] = "Invalid status code"
-
-	m.log().DEBUG("PROBE", kv)
 
 	return false, resp.Status
 }

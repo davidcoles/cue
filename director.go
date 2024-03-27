@@ -25,7 +25,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/davidcoles/cue/log"
 	"github.com/davidcoles/cue/mon"
 )
 
@@ -121,13 +120,10 @@ type Director struct {
 	// Default IP address to use for network probes (needed for SYN, should be optional).
 	Address netip.Addr
 
-	Logger log.Log
-
-	prober mon.Prober
-	mutex  sync.Mutex
-	cfg    map[tuple]Service
-	mon    *mon.Mon
-	die    chan bool
+	mutex sync.Mutex
+	cfg   map[tuple]Service
+	mon   *mon.Mon
+	die   chan bool
 
 	svc map[tuple]status
 }
@@ -141,9 +137,8 @@ func (d *Director) Start(cfg []Service) (err error) {
 
 	d.C = make(chan bool, 1)
 
-	prober, _ := d.balancer().(mon.Prober)
-
-	d.mon, err = mon.New(d.Address, nil, prober, d.Logger)
+	// start monitoring with an empty set of services (nil)
+	d.mon, err = mon.New(d.Address, nil, d.Balancer)
 
 	if err != nil {
 		return err
@@ -267,7 +262,6 @@ func (d *Director) services() (r []Service) {
 
 	m := d.mon
 
-	//vip := map[netip.Addr]status{}
 	svc := map[tuple]status{}
 
 	for _, s := range d.cfg {
@@ -346,16 +340,6 @@ func (d *Director) inform() {
 	case d.C <- true:
 	default:
 	}
-}
-
-func (d *Director) log() log.Log {
-	l := d.Logger
-
-	if l != nil {
-		return l
-	}
-
-	return log.Nil{}
 }
 
 func (d *Director) background() {
