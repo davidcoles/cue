@@ -10,4 +10,9 @@ Backend servers are added and removed from the balancer's pool by the
 A BGP implementation is included and may be used to advertise healthy
 virtual IP address to the network.
 
+Primarily this is used in the [vc5](https://github.com/davidcoles/vc5)
+load balancer and is subject to some change.
 
+## Documentation
+
+[Documentation is here](https://pkg.go.dev/github.com/davidcoles/xvs).
