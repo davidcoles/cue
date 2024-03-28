@@ -362,13 +362,13 @@ func (m *Mon) probes(i Instance, checks Checks) (ok bool, s string) {
 func (m *Mon) Probe(addr netip.Addr, c Check) (ok bool, s string) {
 	switch c.Type {
 	case "http":
-		ok, s = m.HTTP(addr, c.Port, false, bool(c.Method), c.Host, c.Path, c.Expect...)
+		ok, s = m.httpProbe(addr, c.Port, false, bool(c.Method), c.Host, c.Path, c.Expect...)
 	case "https":
-		ok, s = m.HTTP(addr, c.Port, true, bool(c.Method), c.Host, c.Path, c.Expect...)
+		ok, s = m.httpProbe(addr, c.Port, true, bool(c.Method), c.Host, c.Path, c.Expect...)
 	case "syn":
-		ok, s = m.SYN(addr, c.Port)
+		ok, s = m.synProbe(addr, c.Port)
 	case "dns":
-		ok, s = m.DNS(addr, c.Port, bool(c.Method))
+		ok, s = m.dnsProbe(addr, c.Port, bool(c.Method))
 	default:
 		s = "Unknown check type"
 	}
@@ -376,7 +376,7 @@ func (m *Mon) Probe(addr netip.Addr, c Check) (ok bool, s string) {
 	return
 }
 
-func (m *Mon) DNS(addr netip.Addr, port uint16, useTCP bool) (bool, string) {
+func (m *Mon) dnsProbe(addr netip.Addr, port uint16, useTCP bool) (bool, string) {
 
 	if useTCP {
 		return dnstcp(addr.String(), port)
@@ -385,7 +385,7 @@ func (m *Mon) DNS(addr netip.Addr, port uint16, useTCP bool) (bool, string) {
 	return dnsudp(addr.String(), port)
 }
 
-func (m *Mon) SYN(addr netip.Addr, port uint16) (bool, string) {
+func (m *Mon) synProbe(addr netip.Addr, port uint16) (bool, string) {
 
 	if !addr.Is4() {
 		return false, "Not an IPv4 address"
@@ -402,7 +402,7 @@ func (m *Mon) SYN(addr netip.Addr, port uint16) (bool, string) {
 	return syn.Check(ip, port)
 }
 
-func (m *Mon) HTTP(addr netip.Addr, port uint16, https bool, head bool, host, path string, expect ...int) (bool, string) {
+func (m *Mon) httpProbe(addr netip.Addr, port uint16, https bool, head bool, host, path string, expect ...int) (bool, string) {
 	defer client.CloseIdleConnections()
 
 	scheme := "http"
