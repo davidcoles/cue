@@ -205,10 +205,10 @@ func (s *Session) session(id IP, peer string) chan Update {
 						e += " (" + string(n.data) + ")"
 					}
 
-					if n.code == 0 {
-						s.log.BGPSession(peer, false, e) // treat as "remote" as it was a failed connection, not a local shutdown
-					} else {
+					if n.code == 0 && n.sub == LOCAL_SHUTDOWN {
 						s.log.BGPSession(peer, true, e)
+					} else {
+						s.log.BGPSession(peer, false, e) // treat as "remote" as it was a failed connection, not a local shutdown
 					}
 				}
 
