@@ -294,37 +294,3 @@ func (n notification) reason() string {
 
 	return r
 }
-
-/*
-
-func _debug(args ...interface{}) {
-	_, ok := os.LookupEnv("DEBUG")
-	if ok {
-		fmt.Println(args...)
-	}
-}
-
-
-type logger interface {
-	EMERG(...interface{})
-	ALERT(...interface{})
-	CRIT(...interface{})
-	ERR(...interface{})
-	WARNING(...interface{})
-	NOTICE(...interface{})
-	INFO(...interface{})
-	DEBUG(...interface{})
-}
-
-type Logger struct {
-}
-
-func (l *Logger) EMERG(e ...interface{})   { _debug(e...) }
-func (l *Logger) ALERT(e ...interface{})   { _debug(e...) }
-func (l *Logger) CRIT(e ...interface{})    { _debug(e...) }
-func (l *Logger) ERR(e ...interface{})     { _debug(e...) }
-func (l *Logger) WARNING(e ...interface{}) { _debug(e...) }
-func (l *Logger) NOTICE(e ...interface{})  { _debug(e...) }
-func (l *Logger) INFO(e ...interface{})    { _debug(e...) }
-func (l *Logger) DEBUG(e ...interface{})   { _debug(e...) }
-*/

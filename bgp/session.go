@@ -67,10 +67,10 @@ type Session struct {
 	status Status
 	mutex  sync.Mutex
 	update Update
-	log    logger
+	log    BGPNotify
 }
 
-func NewSession(id IP, peer string, p Parameters, r []IP, l logger) *Session {
+func NewSession(id IP, peer string, p Parameters, r []IP, l BGPNotify) *Session {
 	s := &Session{p: p, r: r, log: l, status: Status{State: IDLE}, update: Update{RIB: r, Parameters: p}}
 	s.c = s.session(id, peer)
 	return s
@@ -183,7 +183,7 @@ func (s *Session) session(id IP, peer string) chan Update {
 		for {
 			select {
 			case <-timer.C:
-				s.log.INFO(F, KV{"event": "connect", "peer": peer})
+				s.log.BGPSession(peer, true, "Connecting ...")
 				b, n := s.try(id, peer, updates)
 				var e string
 
@@ -193,7 +193,7 @@ func (s *Session) session(id IP, peer string) chan Update {
 						e += " (" + string(n.data) + ")"
 					}
 
-					s.log.WARNING(F, KV{"event": "disconnected", "peer": peer, "info": e})
+					s.log.BGPSession(peer, false, e)
 
 				} else {
 					if n.code == 0 {
@@ -205,8 +205,11 @@ func (s *Session) session(id IP, peer string) chan Update {
 						e += " (" + string(n.data) + ")"
 					}
 
-					s.log.NOTICE(F, KV{"event": "closed", "peer": peer, "info": e})
-
+					if n.code == 0 {
+						s.log.BGPSession(peer, false, e) // treat as "remote" as it was a failed connection, not a local shutdown
+					} else {
+						s.log.BGPSession(peer, true, e)
+					}
 				}
 
 				s.error(e)

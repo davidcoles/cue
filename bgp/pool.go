@@ -20,13 +20,17 @@ package bgp
 
 import (
 	"net/netip"
-
-	"github.com/davidcoles/cue/log"
 )
 
-type logger = log.Log
+type BGPNotify interface {
+	BGPPeer(peer string, params Parameters, add bool)  // Peer added if "add" is true, peer was removed if not
+	BGPSession(peer string, local bool, reason string) // Session shutdown was locally requested if "local" is true
+}
 
-type KV = map[string]any
+type nul struct{}
+
+func (nul) BGPPeer(string, Parameters, bool) {}
+func (nul) BGPSession(string, bool, string)  {}
 
 type status = map[string]Status
 
@@ -34,17 +38,14 @@ type Pool struct {
 	c chan map[string]Parameters
 	r chan []IP
 	s chan chan status
-	l logger
+	l BGPNotify
 }
 
-func (p *Pool) log() logger {
-	l := p.l
-
-	if l != nil {
+func (p *Pool) log() BGPNotify {
+	if l := p.l; l != nil {
 		return l
 	}
-
-	return &log.Nil{}
+	return &nul{}
 }
 
 func (p *Pool) Status() status {
@@ -84,7 +85,7 @@ func dup(i []IP) (o []IP) {
 	return
 }
 
-func NewPool(routerid IP, peers map[string]Parameters, rib_ []IP, log logger) *Pool {
+func NewPool(routerid IP, peers map[string]Parameters, rib_ []IP, log BGPNotify) *Pool {
 	const F = "pool"
 
 	var nul IP
@@ -134,8 +135,8 @@ func NewPool(routerid IP, peers map[string]Parameters, rib_ []IP, log logger) *P
 					if session, ok := sessions[peer]; ok {
 						session.Configure(params)
 					} else {
-						//pool.log().NOTICE(F, "New peer", routerid, peer, params, rib)
-						pool.log().NOTICE(F, KV{"event": "new-peer", "peer": peer, "params": params, "rib": rib})
+						//pool.log().NXOTICE(F, KV{"event": "new-peer", "peer": peer, "params": params, "rib": rib})
+						pool.log().BGPPeer(peer, params, true)
 						sessions[peer] = NewSession(routerid, peer, params, rib, pool.log())
 					}
 				}
@@ -145,7 +146,8 @@ func NewPool(routerid IP, peers map[string]Parameters, rib_ []IP, log logger) *P
 					if _, ok := i[peer]; !ok {
 						session.Close()
 						delete(sessions, peer)
-						pool.log().NOTICE(F, KV{"event": "deleted-peer", "peer": peer})
+						//pool.log().NXOTICE(F, KV{"event": "deleted-peer", "peer": peer})
+						pool.log().BGPPeer(peer, Parameters{}, false)
 					}
 				}
 			}
