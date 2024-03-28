@@ -15,4 +15,4 @@ load balancer and is subject to some change.
 
 ## Documentation
 
-[Documentation is here](https://pkg.go.dev/github.com/davidcoles/xvs).
+[Documentation is here](https://pkg.go.dev/github.com/davidcoles/cue).
