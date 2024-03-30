@@ -34,13 +34,13 @@ const (
 )
 
 type Check = mon.Check
-type Scheduler = uint8
+type Scheduler = string
 
 type Service struct {
 	Address      netip.Addr
 	Port         uint16
 	Protocol     uint8
-	Scheduler    Scheduler //TODO
+	Scheduler    string
 	Sticky       bool
 	Required     uint8
 	Destinations []Destination
