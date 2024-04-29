@@ -102,6 +102,7 @@ type Prober interface {
 
 type Notifier interface {
 	Notify(Instance, bool)
+	Result(Instance, bool, string)
 }
 
 type Mon struct {
@@ -112,10 +113,11 @@ type Mon struct {
 	notifier Notifier
 }
 
-func New(addr netip.Addr, services map[Instance]Target, helper any) (*Mon, error) {
+//func New(addr netip.Addr, services map[Instance]Target, helper any) (*Mon, error) {
+func New(addr netip.Addr, services map[Instance]Target, notifier Notifier, prober Prober) (*Mon, error) {
 
-	notifier, _ := helper.(Notifier)
-	prober, _ := helper.(Prober)
+	//notifier, _ := helper.(Notifier)
+	//prober, _ := helper.(Prober)
 
 	m := &Mon{C: make(chan bool, 1), services: make(map[Instance]*state), prober: prober, notifier: notifier}
 
@@ -147,18 +149,18 @@ func (m *Mon) Status(svc Service, dst Destination) (status Status, _ bool) {
 	return s.status, ok
 }
 
-func (m *Mon) Dump() map[Instance]Status {
-
-	r := map[Instance]Status{}
-
-	for k, v := range m.services {
-		v.mutex.Lock()
-		r[k] = v.status
-		v.mutex.Unlock()
-	}
-
-	return r
-}
+//func (m *Mon) Dump() map[Instance]Status {
+//
+//	r := map[Instance]Status{}
+//
+//	for k, v := range m.services {
+//		v.mutex.Lock()
+//		r[k] = v.status
+//		v.mutex.Unlock()
+//	}
+//
+//	return r
+//}
 
 func (m *Mon) Stop() {
 	m.Update(nil)
@@ -194,6 +196,12 @@ func (m *Mon) notify(instance Instance, state bool) {
 	}
 }
 
+func (m *Mon) result(instance Instance, state bool, result string) {
+	if m.notifier != nil {
+		m.notifier.Result(instance, state, result)
+	}
+}
+
 func (m *Mon) monitor(instance Instance, state *state, c Checks) chan Checks {
 
 	C := make(chan Checks, 10)
@@ -223,6 +231,8 @@ func (m *Mon) monitor(instance Instance, state *state, c Checks) chan Checks {
 				t := time.Now()
 
 				ok, now.Diagnostic = m.probes(instance, c)
+
+				m.result(instance, ok, now.Diagnostic)
 
 				copy(history[0:], history[1:])
 				history[4] = ok

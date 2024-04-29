@@ -59,14 +59,16 @@ type Destination struct {
 }
 
 type Balancer interface {
-	Configure([]Service) error
+	//Configure([]Service) error
+	None()
 }
 
 type protocol uint8
 type tuple = mon.Service
 type nilBalancer struct{}
 
-func (b *nilBalancer) Configure([]Service) error { return nil }
+//func (b *nilBalancer) Configure([]Service) error { return nil }
+func (b *nilBalancer) None() {}
 
 // If the destination is healthy then this function returns its weight. If unhealthy or disabled, zero is returned
 func (d *Destination) HealthyWeight() uint8 {
@@ -115,7 +117,10 @@ type Director struct {
 	C chan bool
 
 	// The Balancer which will implement the services managed by this Director.
-	Balancer Balancer
+	//Balancer Balancer
+
+	Notifier mon.Notifier
+	Prober   mon.Prober
 
 	// Default IP address to use for network probes (needed for SYN, should be optional).
 	Address netip.Addr
@@ -138,7 +143,8 @@ func (d *Director) Start(cfg []Service) (err error) {
 	d.C = make(chan bool, 1)
 
 	// start monitoring with an empty set of services (nil)
-	d.mon, err = mon.New(d.Address, nil, d.Balancer)
+	//d.mon, err = mon.New(d.Address, nil, d.Balancer)
+	d.mon, err = mon.New(d.Address, nil, d.Notifier, d.Prober)
 
 	if err != nil {
 		return err
@@ -222,22 +228,9 @@ func (d *Director) Configure(config []Service) error {
 
 	d.cfg = cfg
 
-	// balancer update should return a bool/error value to inidcate if the config was acceptable
-	// only do d.cfg = cfg if it was
-	//d.balancer().Configure(config)
-	//d.mon.Update(services)
-	//d.inform()
-
 	d.mon.Update(services)
-	d.update()
-
-	// TODO
-	// save old monitring config
-	// build new monitoring config
-	// apply new monitoring
-	// apply new config to balancer
-	// if not rejected persist blancer + monitoring
-	// if rejected, restore old monitoring
+	//d.update()
+	d.inform()
 
 	return nil
 }
@@ -325,15 +318,18 @@ func (d *Director) Status() (services []Service) {
 
 	return d.status()
 }
-func (d *Director) Trigger() {
-	d.mutex.Lock()
-	defer d.mutex.Unlock()
-	d.update()
-}
-func (d *Director) update() {
-	d.balancer().Configure(d.status())
-	d.inform()
-}
+
+//func (d *Director) Trigger() {
+//	d.mutex.Lock()
+//	defer d.mutex.Unlock()
+//	//d.update()
+//	d.inform()
+//}
+
+//func (d *Director) update() {
+//	//d.balancer().Configure(d.status())
+//	d.inform()
+//}
 
 func (d *Director) inform() {
 	select {
@@ -347,7 +343,8 @@ func (d *Director) background() {
 		select {
 		case <-d.mon.C:
 			d.mutex.Lock()
-			d.update()
+			//d.update()
+			d.inform()
 			d.mutex.Unlock()
 		case <-d.die:
 			d.Configure(nil)
@@ -358,15 +355,15 @@ func (d *Director) background() {
 	}
 }
 
-func (d *Director) balancer() Balancer {
-	b := d.Balancer
-
-	if b == nil {
-		return &nilBalancer{}
-	}
-
-	return b
-}
+//func (d *Director) balancer() Balancer {
+//	b := d.Balancer
+//
+//	if b == nil {
+//		return &nilBalancer{}
+//	}
+//
+//	return b
+//}
 
 func AllVIPs(services []Service) (r []netip.Addr) {
 	vips := map[netip.Addr]bool{}
