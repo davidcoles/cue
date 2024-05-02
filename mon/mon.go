@@ -34,7 +34,7 @@ var client *http.Client
 
 func init() {
 	client = &http.Client{
-		Timeout: time.Second * 3,
+		Timeout: time.Second * 2,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
