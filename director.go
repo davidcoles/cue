@@ -58,17 +58,8 @@ type Destination struct {
 	Checks   []mon.Check `json:"checks"`
 }
 
-type Balancer interface {
-	//Configure([]Service) error
-	None()
-}
-
 type protocol uint8
 type tuple = mon.Service
-type nilBalancer struct{}
-
-//func (b *nilBalancer) Configure([]Service) error { return nil }
-func (b *nilBalancer) None() {}
 
 // If the destination is healthy then this function returns its weight. If unhealthy or disabled, zero is returned
 func (d *Destination) HealthyWeight() uint8 {
@@ -138,13 +129,20 @@ type status struct {
 	time time.Time
 }
 
-func (d *Director) Start(cfg []Service) (err error) {
+func (d *Director) Start(cfg []Service) error {
 
 	d.C = make(chan bool, 1)
 
 	// start monitoring with an empty set of services (nil)
 	//d.mon, err = mon.New(d.Address, nil, d.Balancer)
-	d.mon, err = mon.New(d.Address, nil, d.Notifier, d.Prober)
+	//d.mon, err = mon.New(d.Address, nil, d.Notifier, d.Prober)
+
+	d.mon = &mon.Mon{
+		Notifier: d.Notifier,
+		Prober:   d.Prober,
+	}
+
+	err := d.mon.Start(d.Address, nil)
 
 	if err != nil {
 		return err
@@ -229,7 +227,6 @@ func (d *Director) Configure(config []Service) error {
 	d.cfg = cfg
 
 	d.mon.Update(services)
-	//d.update()
 	d.inform()
 
 	return nil
@@ -319,18 +316,6 @@ func (d *Director) Status() (services []Service) {
 	return d.status()
 }
 
-//func (d *Director) Trigger() {
-//	d.mutex.Lock()
-//	defer d.mutex.Unlock()
-//	//d.update()
-//	d.inform()
-//}
-
-//func (d *Director) update() {
-//	//d.balancer().Configure(d.status())
-//	d.inform()
-//}
-
 func (d *Director) inform() {
 	select {
 	case d.C <- true:
@@ -343,7 +328,6 @@ func (d *Director) background() {
 		select {
 		case <-d.mon.C:
 			d.mutex.Lock()
-			//d.update()
 			d.inform()
 			d.mutex.Unlock()
 		case <-d.die:
@@ -354,16 +338,6 @@ func (d *Director) background() {
 		}
 	}
 }
-
-//func (d *Director) balancer() Balancer {
-//	b := d.Balancer
-//
-//	if b == nil {
-//		return &nilBalancer{}
-//	}
-//
-//	return b
-//}
 
 func AllVIPs(services []Service) (r []netip.Addr) {
 	vips := map[netip.Addr]bool{}

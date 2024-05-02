@@ -42,7 +42,7 @@ func init() {
 			Dial: (&net.Dialer{
 				Timeout: 2 * time.Second,
 			}).Dial,
-			TLSHandshakeTimeout: 1 * time.Second,
+			TLSHandshakeTimeout: 2 * time.Second,
 			TLSClientConfig:     &tls.Config{InsecureSkipVerify: true},
 		},
 	}
@@ -103,23 +103,40 @@ type Prober interface {
 type Notifier interface {
 	Notify(Instance, bool)
 	Result(Instance, bool, string)
+	Check(Instance, string, uint64, bool, string)
 }
 
 type Mon struct {
 	C        chan bool
+	Prober   Prober
+	Notifier Notifier
+
 	services map[Instance]*state
 	syn      *SYN
-	prober   Prober
-	notifier Notifier
 }
 
-//func New(addr netip.Addr, services map[Instance]Target, helper any) (*Mon, error) {
+func (m *Mon) Start(addr netip.Addr, services map[Instance]Target) error {
+	m.C = make(chan bool, 1)
+	m.services = make(map[Instance]*state)
+
+	var nul netip.Addr
+	if addr != nul {
+		var err error
+		m.syn, err = Syn(addr, false)
+
+		if err != nil {
+			return err
+		}
+	}
+
+	m.Update(services)
+
+	return nil
+}
+
 func New(addr netip.Addr, services map[Instance]Target, notifier Notifier, prober Prober) (*Mon, error) {
 
-	//notifier, _ := helper.(Notifier)
-	//prober, _ := helper.(Prober)
-
-	m := &Mon{C: make(chan bool, 1), services: make(map[Instance]*state), prober: prober, notifier: notifier}
+	m := &Mon{C: make(chan bool, 1), services: make(map[Instance]*state), Prober: prober, Notifier: notifier}
 
 	var nul netip.Addr
 	if addr != nul {
@@ -148,19 +165,6 @@ func (m *Mon) Status(svc Service, dst Destination) (status Status, _ bool) {
 
 	return s.status, ok
 }
-
-//func (m *Mon) Dump() map[Instance]Status {
-//
-//	r := map[Instance]Status{}
-//
-//	for k, v := range m.services {
-//		v.mutex.Lock()
-//		r[k] = v.status
-//		v.mutex.Unlock()
-//	}
-//
-//	return r
-//}
 
 func (m *Mon) Stop() {
 	m.Update(nil)
@@ -191,14 +195,20 @@ func (m *Mon) Update(checks map[Instance]Target) {
 }
 
 func (m *Mon) notify(instance Instance, state bool) {
-	if m.notifier != nil {
-		m.notifier.Notify(instance, state)
+	if n := m.Notifier; n != nil {
+		n.Notify(instance, state)
 	}
 }
 
 func (m *Mon) result(instance Instance, state bool, result string) {
-	if m.notifier != nil {
-		m.notifier.Result(instance, state, result)
+	if n := m.Notifier; n != nil {
+		n.Result(instance, state, result)
+	}
+}
+
+func (m *Mon) check(instance Instance, check string, round uint64, state bool, result string) {
+	if n := m.Notifier; n != nil {
+		n.Check(instance, check, round, state, result)
 	}
 }
 
@@ -210,7 +220,8 @@ func (m *Mon) monitor(instance Instance, state *state, c Checks) chan Checks {
 
 	go func() {
 
-		history := [5]bool{false, false, false, false, false}
+		var history [5]bool
+
 		if state.status.OK {
 			history = [5]bool{true, true, true, true, true}
 		}
@@ -218,71 +229,77 @@ func (m *Mon) monitor(instance Instance, state *state, c Checks) chan Checks {
 		ticker := time.NewTicker(2 * time.Second)
 		defer ticker.Stop()
 
+		var round uint64
+
 		for {
+			round++
+
 			var ok bool
 			select {
-			case <-ticker.C:
-				state.mutex.Lock()
-				was := state.status
-				state.mutex.Unlock()
-
-				now := was
-
-				t := time.Now()
-
-				ok, now.Diagnostic = m.probes(instance, c)
-
-				m.result(instance, ok, now.Diagnostic)
-
-				copy(history[0:], history[1:])
-				history[4] = ok
-
-				var passed int
-				for _, v := range history {
-					if v {
-						passed++
-					}
-				}
-
-				if was.OK {
-					if passed < 4 {
-						now.OK = false
-					}
-				} else {
-					if passed > 4 {
-						now.OK = true
-					}
-				}
-
-				now.Last = t
-				now.Took = time.Now().Sub(t)
-				now.Initialised = true
-
-				var changed bool
-				if !was.Initialised || was.OK != now.OK {
-					if was.Initialised {
-						m.notify(instance, now.OK)
-					}
-					changed = true
-					now.When = t
-				}
-
-				state.mutex.Lock()
-				state.status = now
-				state.mutex.Unlock()
-
-				if changed {
-					select {
-					case m.C <- true:
-					default:
-					}
-				}
-
 			case c, ok = <-C:
 				if !ok {
 					return
 				}
+				continue // go back and wait for ticker
+			case <-ticker.C:
 			}
+
+			state.mutex.Lock()
+			was := state.status
+			state.mutex.Unlock()
+
+			now := was
+
+			t := time.Now()
+
+			ok, now.Diagnostic = m.probes(instance, c, round)
+
+			m.result(instance, ok, now.Diagnostic)
+
+			copy(history[0:], history[1:])
+			history[4] = ok
+
+			var passed int
+			for _, v := range history {
+				if v {
+					passed++
+				}
+			}
+
+			if was.OK {
+				if passed < 4 {
+					now.OK = false
+				}
+			} else {
+				if passed > 4 {
+					now.OK = true
+				}
+			}
+
+			now.Last = t
+			now.Took = time.Now().Sub(t)
+			now.Initialised = true
+
+			var changed bool
+			if !was.Initialised || was.OK != now.OK {
+				if was.Initialised {
+					m.notify(instance, now.OK)
+				}
+				changed = true
+				now.When = t
+			}
+
+			state.mutex.Lock()
+			state.status = now
+			state.mutex.Unlock()
+
+			if changed {
+				select {
+				case m.C <- true:
+				default:
+				}
+			}
+
 		}
 	}()
 
@@ -308,6 +325,50 @@ type Check struct {
 
 	// Method - HTTP: GET=false, HEAD=true DNS: UDP=false TCP=true
 	Method method `json:"method,omitempty"`
+}
+
+func (c *Check) codes() (r string) {
+	if len(c.Expect) < 1 {
+		return ""
+	}
+
+	for i, e := range c.Expect {
+		if i == 0 {
+			r = fmt.Sprintf("%d", e)
+		} else {
+			r += fmt.Sprintf(" %d", e)
+		}
+	}
+
+	return
+}
+
+// render checks almost exactly like the raw Go output, but give more
+// context to the method field
+func (c Check) String() string {
+
+	method := ""
+
+	switch c.Type {
+	case "http":
+		fallthrough
+	case "https":
+		if c.Method {
+			method = "HEAD"
+		} else {
+			method = "GET"
+		}
+	case "dns":
+		if c.Method {
+			method = "tcp"
+		} else {
+			method = "udp"
+		}
+	case "syn":
+		method = "tcp"
+	}
+
+	return fmt.Sprintf("{%s %d %s %s [%s] %s}", c.Type, c.Port, c.Host, c.Path, c.codes(), method)
 }
 
 type method bool
@@ -346,20 +407,22 @@ func (m *method) UnmarshalJSON(data []byte) error {
 	return errors.New("Badly formed method: " + s)
 }
 
-func (m *Mon) probes(i Instance, checks Checks) (ok bool, s string) {
+func (m *Mon) probes(i Instance, checks Checks, round uint64) (ok bool, s string) {
 	for _, c := range checks {
 
 		if c.Port == 0 {
 			c.Port = i.Destination.Port
 		}
 
-		p := m.prober
+		p := m.Prober
 
 		if p != nil {
 			ok, s = p.Probe(m, i, c)
 		} else {
 			ok, s = m.Probe(i.Destination.Address, c)
 		}
+
+		m.check(i, c.String(), round, ok, s)
 
 		if !ok {
 			return ok, c.Type + ": " + s
