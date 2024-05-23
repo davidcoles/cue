@@ -19,14 +19,17 @@
 package bgp
 
 import (
+	//"fmt"
 	"io"
 	"net"
-	"regexp"
+	//"regexp"
 	"sync"
 	"time"
 )
 
-type myconn struct {
+type message2 = []byte
+
+type connection struct {
 	C     chan message
 	Error string
 
@@ -37,11 +40,10 @@ type myconn struct {
 	conn        net.Conn
 
 	mutex sync.Mutex
-	out   []message
+	out   []message2
 }
 
-// func new_connection(local net.IP, peer string) (*myconn, error) {
-func new_connection(local IP4, peer string) (*myconn, error) {
+func new_connection2(local IP4, peer string) (*connection, error) {
 	var nul IP4
 
 	dialer := net.Dialer{
@@ -64,7 +66,7 @@ func new_connection(local IP4, peer string) (*myconn, error) {
 		return nil, err
 	}
 
-	c := &myconn{
+	c := &connection{
 		C:           make(chan message),
 		close:       make(chan bool),
 		writer_exit: make(chan bool),
@@ -79,38 +81,40 @@ func new_connection(local IP4, peer string) (*myconn, error) {
 	return c, nil
 }
 
-func (c *myconn) Local() IP {
-	var nul [4]byte
+func (c *connection) Local() ([]byte, bool) {
 
-	addrport := c.conn.LocalAddr().String()
-
-	re := regexp.MustCompile(`^(.*):\d+$`)
-
-	m := re.FindStringSubmatch(addrport)
-
-	if len(m) != 2 {
-		return nul
+	if a, ok := c.conn.LocalAddr().(*net.TCPAddr); ok {
+		return a.IP, true
 	}
 
-	addr := m[1]
+	return nil, false
 
-	ip := net.ParseIP(addr).To4()
+	/*
+		      	addrport := c.conn.LocalAddr().String()
+				re4 := regexp.MustCompile(`^(.*):\d+$`)
+				re6 := regexp.MustCompile(`^\[(.*?)(|%.*)\]:\d+$`)
 
-	if ip == nil {
-		return [4]byte{0, 0, 0, 0}
-	}
-	return [4]byte{ip[0], ip[1], ip[2], ip[3]}
+				if m := re6.FindStringSubmatch(addrport); len(m) == 3 {
+					return net.ParseIP(m[1]).To16(), true
+				}
+
+				if m := re4.FindStringSubmatch(addrport); len(m) == 2 {
+					return net.ParseIP(m[1]).To4(), true
+				}
+
+				return nil, false
+	*/
 }
 
-func (c *myconn) Close() {
+func (c *connection) Close() {
 	close(c.close)
 }
 
-func (c *myconn) shift() (message, bool) {
+func (c *connection) shift() (message2, bool) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 
-	var m message
+	var m message2
 
 	if len(c.out) < 1 {
 		return m, false
@@ -127,11 +131,13 @@ func (c *myconn) shift() (message, bool) {
 	return m, true
 }
 
-func (c *myconn) write(m message) {
+func (c *connection) write(ms ...message2) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 
-	c.out = append(c.out, m)
+	for _, m := range ms {
+		c.out = append(c.out, m)
+	}
 
 	select {
 	case c.pending <- true:
@@ -139,7 +145,33 @@ func (c *myconn) write(m message) {
 	}
 }
 
-func (c *myconn) drain() bool {
+func (c *connection) queue(t uint8, ms ...message2) {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+
+	for _, m := range ms {
+		c.out = append(c.out, headerise(t, m))
+	}
+
+	select {
+	case c.pending <- true:
+	default:
+	}
+}
+
+func (c *connection) write2(t uint8, m ...byte) {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+
+	c.out = append(c.out, headerise(t, m))
+
+	select {
+	case c.pending <- true:
+	default:
+	}
+}
+
+func (c *connection) drain() bool {
 
 	for {
 		m, ok := c.shift()
@@ -150,7 +182,8 @@ func (c *myconn) drain() bool {
 
 		c.conn.SetWriteDeadline(time.Now().Add(3 * time.Second))
 
-		_, err := c.conn.Write(m.headerise())
+		_, err := c.conn.Write(m)
+
 		if err != nil {
 			c.Error = err.Error()
 			return false
@@ -158,7 +191,7 @@ func (c *myconn) drain() bool {
 	}
 }
 
-func (c *myconn) writer() {
+func (c *connection) writer() {
 	defer close(c.writer_exit)
 	defer c.conn.Close()
 
@@ -181,7 +214,7 @@ func (c *myconn) writer() {
 	}
 }
 
-func (c *myconn) reader() {
+func (c *connection) reader() {
 
 	defer close(c.reader_exit)
 	defer close(c.C)

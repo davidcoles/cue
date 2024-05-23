@@ -47,12 +47,21 @@ const (
 	IGP = 0
 	EGP = 1
 
+	//https://www.rfc-editor.org/rfc/rfc3392.txt
+	CAPABILITIES_OPTIONAL_PARAMETER = 2 // Capabilities Optional Parameter (Parameter Type 2)
+
+	// https://www.iana.org/assignments/capability-codes/capability-codes.xhtml
+	BGP4_MP = 1 //Multiprotocol Extensions for BGP-4
+
+	// Path attribute types
 	ORIGIN          = 1
 	AS_PATH         = 2
 	NEXT_HOP        = 3
 	MULTI_EXIT_DISC = 4
 	LOCAL_PREF      = 5
 	COMMUNITIES     = 8
+	MP_REACH_NLRI   = 14 // Multiprotocol Reachable NLRI - MP_REACH_NLRI (Type Code 14)
+	MP_UNREACH_NLRI = 15 // Multiprotocol Unreachable NLRI - MP_UNREACH_NLRI (Type Code 15)
 
 	AS_SET      = 1
 	AS_SEQUENCE = 2
@@ -73,9 +82,6 @@ const (
 	UNNACEPTABLE_HOLD_TIME     = 6
 
 	// CEASE
-	//ADMINISTRATIVE_SHUTDOWN = 2
-	//ADMINISTRATIVE_RESET    = 4
-
 	MAXIMUM_PREFIXES_REACHED        = 1
 	ADMINISTRATIVE_SHUTDOWN         = 2
 	PEER_DECONFIGURED               = 3
@@ -88,6 +94,7 @@ const (
 	WTCR = 64  // (Well-known, Transitive, Complete, Regular length)
 	WTCE = 80  // (Well-known, Transitive, Complete, Extended length)
 	ONCR = 128 // (Optional, Non-transitive, Complete, Regular length)
+	ONCE = 144 // (Optional, Non-transitive, Complete, Extended length)
 	OTCR = 192 // (Optional, Transitive, Complete, Regular length)
 )
 
@@ -245,13 +252,18 @@ func (n notification) String() string {
 	return fmt.Sprintf("[CODE:%d SUBCODE:%d DATA:%v]", n.code, n.sub, n.data)
 }
 
-func (n notification) message() []byte {
+func (n notification) messagex() []byte {
 	return headerise(M_NOTIFICATION, n.bin())
 }
 
 func (n notification) bin() []byte {
 	return append([]byte{n.code, n.sub}, n.data[:]...)
 }
+
+func (n notification) message() []byte {
+	return append([]byte{n.code, n.sub}, n.data[:]...)
+}
+
 func newnotification(d []byte) notification {
 	var n notification
 	n.code = d[0]
