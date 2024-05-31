@@ -221,7 +221,7 @@ func (u *update) message(rib map[netip.Addr]bool) []byte {
 	// rfc4271: A BGP speaker MUST NOT include this attribute in UPDATE messages it sends to external peers ...
 	if !u.External && u.LocalPref > 0 {
 		// (Well-known, Transitive, Complete, Regular length), LOCAL_PREF(5), 4 bytes
-		attr := append([]byte{WTCR, LOCAL_PREF, 4}, htonl(local_pref)...)
+		attr := append([]byte{WTCR, LOCAL_PREF, 4}, htonl(u.LocalPref)...)
 		path_attributes = append(path_attributes, attr...)
 	}
 
