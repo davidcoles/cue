@@ -368,7 +368,7 @@ func (s *Session) try(routerid IP, peer string, updates chan Update) (bool, noti
 	var parameters Parameters
 
 	notify := func(code, sub byte) notification {
-		n := notificationM(code, sub)
+		n := notificationMessage(code, sub)
 		conn.queue(M_NOTIFICATION, n.message())
 		return n
 	}
@@ -437,7 +437,7 @@ func (s *Session) try(routerid IP, peer string, updates chan Update) (bool, noti
 				p := s.update.Parameters
 				u := updateTemplate.withParameters(p)
 
-				// initial NLRI will simply advertise any initial addresses int the RIB
+				// initial NLRI will simply advertise any initial addresses in the RIB
 				adjRIBOut, nlri = NLRI(s.update.adjRIBOut(ipv6), nil, false)
 				parameters = p
 

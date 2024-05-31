@@ -134,7 +134,7 @@ type Parameters struct {
 	// only used at session start
 	ASNumber uint16 `json:"as_number,omitempty"`
 	HoldTime uint16 `json:"hold_time,omitempty"`
-	SourceIP IP4    `json:"source_ip,omitempty"`
+	SourceIP IP4    `json:"source_ip,omitempty"` // not sure that this can be used with Dial()
 
 	NextHop4      IP4  `json:"next_hop_4,omitempty"`
 	NextHop6      IP6  `json:"next_hop_6,omitempty"`

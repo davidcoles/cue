@@ -96,6 +96,7 @@ const (
 	ONCR = 128 // (Optional, Non-transitive, Complete, Regular length)
 	ONCE = 144 // (Optional, Non-transitive, Complete, Extended length)
 	OTCR = 192 // (Optional, Transitive, Complete, Regular length)
+	OTCE = 208 // (Optional, Transitive, Complete, Extended length)
 )
 
 func note(code, sub uint8) string {
