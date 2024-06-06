@@ -368,7 +368,8 @@ func (s *Session) try(routerid IP, peer string, updates chan Update) (bool, noti
 	var parameters Parameters
 
 	notify := func(code, sub byte) notification {
-		n := notificationMessage(code, sub)
+		//n := notificationMessage(code, sub)
+		n := notification{code: code, sub: sub}
 		conn.queue(M_NOTIFICATION, n.message())
 		return n
 	}
@@ -410,16 +411,19 @@ func (s *Session) try(routerid IP, peer string, updates chan Update) (bool, noti
 					return false, notify(OPEN_ERROR, UNSUPPORTED_VERSION_NUMBER)
 				}
 
-				if m.open.ht < 3 {
+				//if m.open.ht < 3 {
+				if m.open.HoldTime < 3 {
 					return false, notify(OPEN_ERROR, UNNACEPTABLE_HOLD_TIME)
 				}
 
-				if m.open.id == routerid {
+				if m.open.ID == routerid {
 					return false, notify(OPEN_ERROR, BAD_BGP_ID)
 				}
 
-				if m.open.ht < holdtime {
-					holdtime = m.open.ht
+				//if m.open.ht < holdtime {
+				if m.open.HoldTime < holdtime {
+					//holdtime = m.open.ht
+					holdtime = m.open.HoldTime
 					hold_time_ns = time.Duration(holdtime) * time.Second
 					keepalive_time_ns = hold_time_ns / 3
 				}
@@ -427,9 +431,11 @@ func (s *Session) try(routerid IP, peer string, updates chan Update) (bool, noti
 				hold_timer.Reset(hold_time_ns)
 				keepalive_timer.Reset(keepalive_time_ns)
 
-				external = m.open.as != asnumber
+				//external = m.open.as != asnumber
+				external = m.open.ASN != asnumber
 
-				s.established(holdtime, asnumber, m.open.as)
+				//s.established(holdtime, asnumber, m.open.as)
+				s.established(holdtime, asnumber, m.open.ASN)
 
 				conn.queue(M_KEEPALIVE, nil)
 
@@ -466,8 +472,9 @@ func (s *Session) try(routerid IP, peer string, updates chan Update) (bool, noti
 		case r, ok := <-updates:
 
 			if !ok {
-				conn.write(shutdownMessage("That's all, folks!").headerise())
-				return false, local(LOCAL_SHUTDOWN, "")
+				//conn.write(shutdownMessage("That's all, folks!").headerise())
+				//return false, local(LOCAL_SHUTDOWN, "")
+				return false, notify(CEASE, ADMINISTRATIVE_SHUTDOWN)
 			}
 
 			if s.status.State == ESTABLISHED {

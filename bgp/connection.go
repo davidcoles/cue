@@ -43,6 +43,22 @@ type connection struct {
 	out   []message2
 }
 
+func addHeader(t byte, d []byte) []byte {
+	l := 19 + len(d)
+	p := make([]byte, l)
+	for n := 0; n < 16; n++ {
+		p[n] = 0xff
+	}
+
+	p[16] = byte(l >> 8)
+	p[17] = byte(l & 0xff)
+	p[18] = t
+
+	copy(p[19:], d)
+
+	return p
+}
+
 func new_connection2(local IP4, peer string) (*connection, error) {
 	var nul IP4
 
@@ -150,7 +166,8 @@ func (c *connection) queue(t uint8, ms ...message2) {
 	defer c.mutex.Unlock()
 
 	for _, m := range ms {
-		c.out = append(c.out, headerise(t, m))
+		//c.out = append(c.out, headerise(t, m))
+		c.out = append(c.out, addHeader(t, m))
 	}
 
 	select {
@@ -163,7 +180,8 @@ func (c *connection) write2(t uint8, m ...byte) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 
-	c.out = append(c.out, headerise(t, m))
+	//c.out = append(c.out, headerise(t, m))
+	c.out = append(c.out, addHeader(t, m))
 
 	select {
 	case c.pending <- true:
@@ -259,9 +277,15 @@ func (c *connection) reader() {
 
 		switch mtype {
 		case M_OPEN:
-			m = message{mtype: mtype, open: newopen(body)}
+			var o xopen
+			o.parse(body)
+			//m = message{mtype: mtype, yopen: newopen(body), xopen: o}
+			m = message{mtype: mtype, open: o}
 		case M_NOTIFICATION:
-			m = message{mtype: mtype, notification: newnotification(body)}
+			//m = message{mtype: mtype, notification: newnotification(body)}
+			var n notification
+			n.parse(body)
+			m = message{mtype: mtype, notification: n}
 		default:
 			m = message{mtype: mtype, body: body}
 		}

@@ -27,8 +27,8 @@
 package bgp
 
 import (
-	"fmt"
-	//"os"
+//"fmt"
+//"os"
 )
 
 func htonl(h uint32) []byte {
@@ -169,79 +169,84 @@ func note(code, sub uint8) string {
 // W   N  C  R  0 0 0 0
 // O   T  P  E  0 0 0 0
 
-type open struct {
-	version byte
-	as      uint16
-	ht      uint16
-	id      IP
-	op      []byte
-}
+// func (b open) String() string {
+// 	op := b.op
+// 	type param struct {
+// 		t uint8
+// 		v []byte
+// 	}
+// 	var p []param
+// 	for len(op) > 2 {
+// 		t := op[0]
+// 		l := op[1]
+// 		if 2+int(l) > len(op) {
+// 			break
+// 		}
+// 		v := op[2 : 2+l]
+// 		op = op[2+l:]
+// 		p = append(p, param{t: t, v: v})
+// 	}
 
-func (b open) String() string {
-	op := b.op
-	type param struct {
-		t uint8
-		v []byte
-	}
-	var p []param
-	for len(op) > 2 {
-		t := op[0]
-		l := op[1]
-		if 2+int(l) > len(op) {
-			break
-		}
-		v := op[2 : 2+l]
-		op = op[2+l:]
-		p = append(p, param{t: t, v: v})
-	}
+// 	return fmt.Sprintf("[VERSION:%d AS:%d HOLD:%d ID:%s OPL:%d %v]", b.version, b.as, b.ht, b.id, len(b.op), p)
+// }
 
-	return fmt.Sprintf("[VERSION:%d AS:%d HOLD:%d ID:%s OPL:%d %v]", b.version, b.as, b.ht, b.id, len(b.op), p)
-}
+// func (m message) String() string {
+// 	switch m.mtype {
+// 	case M_OPEN:
+// 		return "OPEN:" + m.open.String()
+// 	case M_NOTIFICATION:
+// 		return "NOTIFICATION:" + m.notification.String()
+// 	case M_KEEPALIVE:
+// 		return "KEEPALIVE"
+// 	case M_UPDATE:
+// 		return fmt.Sprintf("UPDATE:%v", m.body)
+// 	}
+// 	return fmt.Sprintf("%d:%v", m.mtype, m.body)
+// }
 
-func (m message) String() string {
-	switch m.mtype {
-	case M_OPEN:
-		return "OPEN:" + m.open.String()
-	case M_NOTIFICATION:
-		return "NOTIFICATION:" + m.notification.String()
-	case M_KEEPALIVE:
-		return "KEEPALIVE"
-	case M_UPDATE:
-		return fmt.Sprintf("UPDATE:%v", m.body)
-	}
-	return fmt.Sprintf("%d:%v", m.mtype, m.body)
-}
+// func (m message) xheaderise() []byte {
+// 	switch m.mtype {
+// 	case M_OPEN:
+// 		return headerise(m.mtype, m.open.bin())
+// 	case M_NOTIFICATION:
+// 		return headerise(m.mtype, m.notification.bin())
+// 	case M_KEEPALIVE:
+// 		return headerise(m.mtype, []byte{})
+// 	case M_UPDATE:
+// 		return headerise(m.mtype, m.body)
+// 	}
+// 	return headerise(m.mtype, []byte{})
+// }
 
-func (m message) headerise() []byte {
-	switch m.mtype {
-	case M_OPEN:
-		return headerise(m.mtype, m.open.bin())
-	case M_NOTIFICATION:
-		return headerise(m.mtype, m.notification.bin())
-	case M_KEEPALIVE:
-		return headerise(m.mtype, []byte{})
-	case M_UPDATE:
-		return headerise(m.mtype, m.body)
-	}
-	return headerise(m.mtype, []byte{})
-}
+//type message struct {
+//	mtype byte
+//	//yopen        open
+//	open         xopen
+//	notification notification
+//	body         []byte
+//}
 
-type message struct {
-	mtype        byte
-	open         open
-	notification notification
-	body         []byte
-}
+//type open struct {
+//	version byte
+//	as      uint16
+//	ht      uint16
+//	id      IP
+//	op      []byte
+//}
 
-func newopen(d []byte) open {
-	var o open
-	o.version = d[0]
-	o.as = (uint16(d[1]) << 8) | uint16(d[2])
-	o.ht = (uint16(d[3]) << 8) | uint16(d[4])
-	copy(o.id[:], d[5:9])
-	o.op = d[10:]
-	return o
-}
+//func newopen(d []byte) open {
+//	var o open
+//	o.version = d[0]
+//	o.as = (uint16(d[1]) << 8) | uint16(d[2])
+//	o.ht = (uint16(d[3]) << 8) | uint16(d[4])
+//	copy(o.id[:], d[5:9])
+//	o.op = d[10:]
+//	return o
+//}
+
+//func (b *open) bin() []byte {
+//	return []byte{b.version, byte(b.as >> 8), byte(b.as), byte(b.ht >> 8), byte(b.ht), b.id[0], b.id[1], b.id[2], b.id[3], 0}
+//}
 
 type notification struct {
 	code uint8
@@ -249,61 +254,68 @@ type notification struct {
 	data []byte
 }
 
-func (n notification) String() string {
-	return fmt.Sprintf("[CODE:%d SUBCODE:%d DATA:%v]", n.code, n.sub, n.data)
-}
-
-func (n notification) messagex() []byte {
-	return headerise(M_NOTIFICATION, n.bin())
-}
-
-func (n notification) bin() []byte {
-	return append([]byte{n.code, n.sub}, n.data[:]...)
-}
-
 func (n notification) message() []byte {
 	return append([]byte{n.code, n.sub}, n.data[:]...)
 }
 
-func newnotification(d []byte) notification {
-	var n notification
+func (n *notification) parse(d []byte) bool {
+	//var n notification
+	if len(d) < 2 {
+		return false
+	}
 	n.code = d[0]
 	n.sub = d[1]
-	n.data = d[2:]
-	return n
+	n.data = d[2:] // if len(d) is 2 then this will return an empty slice, not a panic
+	return true
 }
 
-func (b *open) bin() []byte {
-	return []byte{b.version, byte(b.as >> 8), byte(b.as), byte(b.ht >> 8), byte(b.ht), b.id[0], b.id[1], b.id[2], b.id[3], 0}
-}
+//func (n notification) String() string {
+//	return fmt.Sprintf("[CODE:%d SUBCODE:%d DATA:%v]", n.code, n.sub, n.data)
+//}
 
-func headerise(t byte, d []byte) []byte {
-	l := 19 + len(d)
-	p := make([]byte, l)
-	for n := 0; n < 16; n++ {
-		p[n] = 0xff
-	}
+//func (n notification) messagex() []byte {
+//	return headerise(M_NOTIFICATION, n.bin())
+//}
 
-	p[16] = byte(l >> 8)
-	p[17] = byte(l & 0xff)
-	p[18] = t
+//func (n notification) bin() []byte {
+//	return append([]byte{n.code, n.sub}, n.data[:]...)
+//}
 
-	copy(p[19:], d)
+//func newnotification(d []byte) notification {
+//	var n notification
+//	n.code = d[0]
+//	n.sub = d[1]
+//	n.data = d[2:]
+//	return n
+//}
 
-	return p
-}
+//func headerise(t byte, d []byte) []byte {
+//	l := 19 + len(d)
+//	p := make([]byte, l)
+//	for n := 0; n < 16; n++ {
+//		p[n] = 0xff
+//	}
+//
+//	p[16] = byte(l >> 8)
+//	p[17] = byte(l & 0xff)
+//	p[18] = t
+//
+//	copy(p[19:], d)
+//
+//	return p
+//}
 
-func (n notification) reason() string {
-	r := fmt.Sprintf("[%d:%d]", n.code, n.sub)
-	s := note(n.code, n.sub)
+// func (n notification) reason() string {
+// 	r := fmt.Sprintf("[%d:%d]", n.code, n.sub)
+// 	s := note(n.code, n.sub)
 
-	if s != "" {
-		r += " " + s
-	}
+// 	if s != "" {
+// 		r += " " + s
+// 	}
 
-	if len(n.data) > 0 {
-		r += " (" + string(n.data) + ")"
-	}
+// 	if len(n.data) > 0 {
+// 		r += " (" + string(n.data) + ")"
+// 	}
 
-	return r
-}
+// 	return r
+// }

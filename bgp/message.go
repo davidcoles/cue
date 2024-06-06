@@ -22,25 +22,47 @@ import (
 	"net/netip"
 )
 
-func notificationMessage(code, sub uint8) notification {
-	return notification{code: code, sub: sub}
+func ntohl(a, b, c, d byte) uint32 {
+	return uint32(a)<<24 | uint32(b)<<16 | uint32(c)<<8 | uint32(d)
 }
 
-func shutdownMessage(d string) message {
-	return message{mtype: M_NOTIFICATION, notification: notification{
-		code: CEASE, sub: ADMINISTRATIVE_SHUTDOWN, data: []byte(d),
-	}}
+//func notificationMessage(code, sub uint8) notification {
+//	return notification{code: code, sub: sub}
+//}
+
+//func shutdownMessage(d string) message {
+//	return message{mtype: M_NOTIFICATION, notification: notification{
+//		code: CEASE, sub: ADMINISTRATIVE_SHUTDOWN, data: []byte(d),
+//	}}
+//}
+
+type message struct {
+	mtype byte
+	//yopen        open
+	open         xopen
+	notification notification
+	body         []byte
 }
 
 type xopen struct {
+	version  byte
 	ASN      uint16
 	HoldTime uint16
 	ID       [4]byte
 	MP       bool
+	op       []byte
 }
 
-func ntohl(a, b, c, d byte) uint32 {
-	return uint32(a)<<24 | uint32(b)<<16 | uint32(c)<<8 | uint32(d)
+func (o *xopen) parse(d []byte) bool {
+	if len(d) < 9 {
+		return false
+	}
+	o.version = d[0]
+	o.ASN = (uint16(d[1]) << 8) | uint16(d[2])
+	o.HoldTime = (uint16(d[3]) << 8) | uint16(d[4])
+	copy(o.ID[:], d[5:9])
+	o.op = d[10:]
+	return true
 }
 
 func (o *xopen) message() []byte {
@@ -49,6 +71,7 @@ func (o *xopen) message() []byte {
 	id := o.ID
 
 	open := []byte{4, as[0], as[1], ht[0], ht[1], id[0], id[1], id[2], id[3]}
+	var params []byte
 
 	// AFI[2], Reserved[1](always 0), SAFI[1]
 
@@ -62,23 +85,23 @@ func (o *xopen) message() []byte {
 	param_ipv4 := append([]byte{CAPABILITIES_OPTIONAL_PARAMETER, byte(len(mp_ipv4))}, mp_ipv4...)
 	param_ipv6 := append([]byte{CAPABILITIES_OPTIONAL_PARAMETER, byte(len(mp_ipv6))}, mp_ipv6...)
 
-	var params []byte
 	if o.MP {
 		params = append(params, param_ipv6...)
 		params = append(params, param_ipv4...)
 	}
+
 	params = append([]byte{byte(len(params))}, params...)
 
 	return append(open, params...)
 }
 
-func (o *xopen) render() []byte {
-	return headerise(M_OPEN, o.message())
-}
+//func (o *xopen) render() []byte {
+//	return headerise(M_OPEN, o.message())
+//}
 
-func keepalive() []byte {
-	return headerise(M_KEEPALIVE, nil)
-}
+//func keepalive() []byte {
+//	return headerise(M_KEEPALIVE, nil)
+//}
 
 type update struct {
 	NextHop       [4]byte
@@ -101,14 +124,12 @@ func (u *update) withParameters(p Parameters) (r update) {
 	return
 }
 
-func (u *update) render() (ret [][]byte) {
-
-	for _, u := range u.messages(u.RIB) {
-		ret = append(ret, headerise(M_UPDATE, u))
-	}
-
-	return ret
-}
+//func (u *update) renderx() (ret [][]byte) {
+//	for _, u := range u.messages(u.RIB) {
+//		ret = append(ret, headerise(M_UPDATE, u))
+//	}
+//	return ret
+//}
 
 func (u *update) messages(m map[netip.Addr]bool) (ret [][]byte) {
 
