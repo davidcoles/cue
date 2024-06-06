@@ -333,8 +333,9 @@ func (s *Session) try(routerid IP, peer string, updates chan Update) (bool, noti
 
 	s.connect()
 
-	o := xopen{ASN: asnumber, HoldTime: holdtime, ID: routerid, MP: true}
-	conn.queue(M_OPEN, o.message())
+	o := open{asNumber: asnumber, holdTime: holdtime, routerID: routerid, multiprotocol: true}
+	//conn.queue(M_OPEN, o.message())
+	conn.queue2(&o)
 
 	s.state(OPEN_SENT)
 
@@ -368,9 +369,8 @@ func (s *Session) try(routerid IP, peer string, updates chan Update) (bool, noti
 	var parameters Parameters
 
 	notify := func(code, sub byte) notification {
-		//n := notificationMessage(code, sub)
 		n := notification{code: code, sub: sub}
-		conn.queue(M_NOTIFICATION, n.message())
+		conn.queue2(&n)
 		return n
 	}
 
@@ -411,19 +411,16 @@ func (s *Session) try(routerid IP, peer string, updates chan Update) (bool, noti
 					return false, notify(OPEN_ERROR, UNSUPPORTED_VERSION_NUMBER)
 				}
 
-				//if m.open.ht < 3 {
-				if m.open.HoldTime < 3 {
+				if m.open.holdTime < 3 {
 					return false, notify(OPEN_ERROR, UNNACEPTABLE_HOLD_TIME)
 				}
 
-				if m.open.ID == routerid {
+				if m.open.routerID == routerid {
 					return false, notify(OPEN_ERROR, BAD_BGP_ID)
 				}
 
-				//if m.open.ht < holdtime {
-				if m.open.HoldTime < holdtime {
-					//holdtime = m.open.ht
-					holdtime = m.open.HoldTime
+				if m.open.holdTime < holdtime {
+					holdtime = m.open.holdTime
 					hold_time_ns = time.Duration(holdtime) * time.Second
 					keepalive_time_ns = hold_time_ns / 3
 				}
@@ -431,13 +428,11 @@ func (s *Session) try(routerid IP, peer string, updates chan Update) (bool, noti
 				hold_timer.Reset(hold_time_ns)
 				keepalive_timer.Reset(keepalive_time_ns)
 
-				//external = m.open.as != asnumber
-				external = m.open.ASN != asnumber
+				external = m.open.asNumber != asnumber
 
-				//s.established(holdtime, asnumber, m.open.as)
-				s.established(holdtime, asnumber, m.open.ASN)
+				s.established(holdtime, asnumber, m.open.asNumber)
 
-				conn.queue(M_KEEPALIVE, nil)
+				conn.queue2(&keepalive{})
 
 				t := time.Now()
 				p := s.update.Parameters
@@ -450,10 +445,10 @@ func (s *Session) try(routerid IP, peer string, updates chan Update) (bool, noti
 				//fmt.Println("Init:", adjRIBOut, nlri)
 
 				if len(nlri) > 0 {
-					if messages := u.messages(nlri); len(messages) < 1 {
+					if updates := u.updates(nlri); len(updates) < 1 {
 						return false, notify(CEASE, OUT_OF_RESOURCES)
 					} else {
-						conn.queue(M_UPDATE, messages...)
+						conn.queue2(updates...)
 					}
 				}
 
@@ -472,8 +467,6 @@ func (s *Session) try(routerid IP, peer string, updates chan Update) (bool, noti
 		case r, ok := <-updates:
 
 			if !ok {
-				//conn.write(shutdownMessage("That's all, folks!").headerise())
-				//return false, local(LOCAL_SHUTDOWN, "")
 				return false, notify(CEASE, ADMINISTRATIVE_SHUTDOWN)
 			}
 
@@ -489,10 +482,10 @@ func (s *Session) try(routerid IP, peer string, updates chan Update) (bool, noti
 				//fmt.Println("Update:", adjRIBOut, nlri)
 
 				if len(nlri) > 0 {
-					if messages := u.messages(nlri); len(messages) < 1 {
+					if updates := u.updates(nlri); len(updates) < 1 {
 						return false, notify(CEASE, OUT_OF_RESOURCES)
 					} else {
-						conn.queue(M_UPDATE, messages...)
+						conn.queue2(updates...)
 					}
 				}
 
@@ -503,7 +496,7 @@ func (s *Session) try(routerid IP, peer string, updates chan Update) (bool, noti
 
 		case <-keepalive_timer.C:
 			if s.status.State == ESTABLISHED {
-				conn.queue(M_KEEPALIVE, nil)
+				conn.queue2(&keepalive{})
 			}
 
 		case <-hold_timer.C:

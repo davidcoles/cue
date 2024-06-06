@@ -22,15 +22,12 @@ import (
 	"net/netip"
 )
 
-func ntohl(a, b, c, d byte) uint32 {
-	return uint32(a)<<24 | uint32(b)<<16 | uint32(c)<<8 | uint32(d)
+type Message interface {
+	Type() uint8
+	Body() []byte
 }
 
-type message struct {
-	mtype        byte
-	open         xopen
-	notification notification
-	body         []byte
+type keepalive struct {
 }
 
 type notification struct {
@@ -43,6 +40,20 @@ func (n notification) message() []byte {
 	return append([]byte{n.code, n.sub}, n.data[:]...)
 }
 
+func (n *notification) Type() uint8  { return M_NOTIFICATION }
+func (n *notification) Body() []byte { return n.message() }
+
+func (o *open) Type() uint8  { return M_OPEN }
+func (o *open) Body() []byte { return o.message() }
+
+func (k *keepalive) Type() uint8  { return M_KEEPALIVE }
+func (k *keepalive) Body() []byte { return nil }
+
+type fragment []byte
+
+func (f *fragment) Type() uint8  { return M_UPDATE }
+func (f *fragment) Body() []byte { return (*f)[:] }
+
 func (n *notification) parse(d []byte) bool {
 	if len(d) < 2 {
 		return false
@@ -53,31 +64,32 @@ func (n *notification) parse(d []byte) bool {
 	return true
 }
 
-type xopen struct {
-	version  byte
-	ASN      uint16
-	HoldTime uint16
-	ID       [4]byte
-	MP       bool
-	op       []byte
+type open struct {
+	asNumber      uint16
+	holdTime      uint16
+	routerID      [4]byte
+	multiprotocol bool
+
+	version byte
+	op      []byte
 }
 
-func (o *xopen) parse(d []byte) bool {
-	if len(d) < 9 {
+func (o *open) parse(d []byte) bool {
+	if len(d) < 10 {
 		return false
 	}
 	o.version = d[0]
-	o.ASN = (uint16(d[1]) << 8) | uint16(d[2])
-	o.HoldTime = (uint16(d[3]) << 8) | uint16(d[4])
-	copy(o.ID[:], d[5:9])
+	o.asNumber = (uint16(d[1]) << 8) | uint16(d[2])
+	o.holdTime = (uint16(d[3]) << 8) | uint16(d[4])
+	copy(o.routerID[:], d[5:9])
 	o.op = d[10:]
 	return true
 }
 
-func (o *xopen) message() []byte {
-	as := htons(o.ASN)
-	ht := htons(o.HoldTime)
-	id := o.ID
+func (o *open) message() []byte {
+	as := htons(o.asNumber)
+	ht := htons(o.holdTime)
+	id := o.routerID
 
 	open := []byte{4, as[0], as[1], ht[0], ht[1], id[0], id[1], id[2], id[3]}
 	var params []byte
@@ -94,7 +106,7 @@ func (o *xopen) message() []byte {
 	param_ipv4 := append([]byte{CAPABILITIES_OPTIONAL_PARAMETER, byte(len(mp_ipv4))}, mp_ipv4...)
 	param_ipv6 := append([]byte{CAPABILITIES_OPTIONAL_PARAMETER, byte(len(mp_ipv6))}, mp_ipv6...)
 
-	if o.MP {
+	if o.multiprotocol {
 		params = append(params, param_ipv6...)
 		params = append(params, param_ipv4...)
 	}
@@ -125,7 +137,7 @@ func (u *update) withParameters(p Parameters) (r update) {
 	return
 }
 
-func (u *update) messages(m map[netip.Addr]bool) (ret [][]byte) {
+func (u *update) updates(m map[netip.Addr]bool) (ret []Message) {
 
 	if len(m) < 1 {
 		return nil
@@ -134,7 +146,7 @@ func (u *update) messages(m map[netip.Addr]bool) (ret [][]byte) {
 	msg := u.message(m)
 
 	if len(msg) < 4000 {
-		return append(ret, msg)
+		return append(ret, &msg)
 	}
 
 	if len(m) == 1 {
@@ -160,13 +172,13 @@ func (u *update) messages(m map[netip.Addr]bool) (ret [][]byte) {
 		n++
 	}
 
-	if m := u.messages(m1); len(m) < 1 {
+	if m := u.updates(m1); len(m) < 1 {
 		return nil
 	} else {
 		ret = append(ret, m...)
 	}
 
-	if m := u.messages(m2); len(m) < 1 {
+	if m := u.updates(m2); len(m) < 1 {
 		return nil
 	} else {
 		ret = append(ret, m...)
@@ -175,7 +187,8 @@ func (u *update) messages(m map[netip.Addr]bool) (ret [][]byte) {
 	return ret
 }
 
-func (u *update) message(rib map[netip.Addr]bool) []byte {
+//func (u *update) message(rib map[netip.Addr]bool) []byte {
+func (u *update) message(rib map[netip.Addr]bool) fragment {
 
 	next_hop_address6 := u.NextHop6[:] // should be 16 or 32 bytes - a global adddress or global+link-local pair
 	next_hop_address4 := u.NextHop

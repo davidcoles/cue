@@ -25,6 +25,13 @@ import (
 	"time"
 )
 
+type message struct {
+	mtype        byte
+	open         open
+	notification notification
+	body         []byte
+}
+
 type message2 = []byte
 
 type connection struct {
@@ -157,6 +164,20 @@ func (c *connection) queue(t uint8, ms ...message2) {
 	}
 }
 
+func (c *connection) queue2(ms ...Message) {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+
+	for _, m := range ms {
+		c.out = append(c.out, addHeader(m.Type(), m.Body()))
+	}
+
+	select {
+	case c.pending <- true:
+	default:
+	}
+}
+
 func (c *connection) write2(t uint8, m ...byte) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
@@ -257,7 +278,7 @@ func (c *connection) reader() {
 
 		switch mtype {
 		case M_OPEN:
-			var o xopen
+			var o open
 			o.parse(body) // todo - handle failed parse better (connection gets killed anyway)
 			m = message{mtype: mtype, open: o}
 		case M_NOTIFICATION:
