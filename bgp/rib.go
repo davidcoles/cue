@@ -47,7 +47,6 @@ type Update struct {
 
 func (r *Update) adjRIBOutString(ipv6 bool) (out []string) {
 	for _, p := range r.Filter(ipv6) {
-		//out = append(out, ip_string(p))
 		out = append(out, p.String())
 	}
 	return
@@ -65,7 +64,6 @@ func (u *Update) Initial(ipv6 bool) map[netip.Addr]bool {
 	return out
 }
 
-//func (r *Update) adjRIBOutP() ([]IP, Parameters) {
 func (r *Update) adjRIBOutP(ipv6 bool) ([]netip.Addr, Parameters) {
 	return r.Filter(ipv6), r.Parameters
 }
@@ -90,16 +88,9 @@ filter:
 			}
 		}
 
-		//ip := net.ParseIP(ip_string(i))
-		//ip := net.ParseIP(i.String())
 		ip := i
 
-		//if ip == nil {
-		//		continue
-		//	}
-
 		for _, ipnet := range p.Accept {
-			//n := net.IPNet(ipnet)
 			n := ipnet
 			if n.Contains(ip) {
 				pass = append(pass, i)
@@ -108,7 +99,6 @@ filter:
 		}
 
 		for _, ipnet := range p.Reject {
-			//n := net.IPNet(ipnet)
 			n := ipnet
 			if n.Contains(ip) {
 				continue filter
@@ -241,73 +231,3 @@ func (c *Update) updates(p Update, ipv6 bool) (uint64, uint64, map[netip.Addr]bo
 
 	return advertise, withdraw, nrli
 }
-
-/*
-func (c *Update) oldupdates(p Update) (uint64, uint64, map[IP]bool) {
-	nrli := map[IP]bool{}
-
-	var advertise uint64
-	var withdraw uint64
-
-	var vary bool = c.Parameters.Diff(p.Parameters)
-
-	curr := map[IP]bool{}
-	prev := map[IP]bool{}
-
-	for _, ip := range c.adjRIBOut() {
-		curr[ip] = true
-	}
-
-	for _, ip := range p.adjRIBOut() {
-		prev[ip] = true
-	}
-
-	for ip, _ := range curr {
-		_, ok := prev[ip] // if didn't exist in previous rib, or params have changed then need to advertise
-		if !ok || vary {
-			advertise++
-			nrli[ip] = true
-		}
-	}
-
-	for ip, _ := range prev {
-		_, ok := curr[ip] // if not in current rib then need to withdraw
-		if !ok {
-			withdraw++
-			nrli[ip] = false
-		}
-	}
-
-	return advertise, withdraw, nrli
-}
-*/
-
-/*
-func RIBSDiffer(a, b []IP) bool {
-
-	x := map[IP]bool{}
-	for _, i := range a {
-		x[i] = true
-	}
-
-	y := map[IP]bool{}
-	for _, i := range b {
-		y[i] = true
-	}
-
-	if len(y) != len(y) {
-		return true
-	}
-
-	for i, _ := range x {
-		_, ok := y[i]
-		if !ok {
-			return true
-		}
-		delete(y, i)
-	}
-
-	return len(y) != 0
-}
-
-*/

@@ -26,22 +26,31 @@ func ntohl(a, b, c, d byte) uint32 {
 	return uint32(a)<<24 | uint32(b)<<16 | uint32(c)<<8 | uint32(d)
 }
 
-//func notificationMessage(code, sub uint8) notification {
-//	return notification{code: code, sub: sub}
-//}
-
-//func shutdownMessage(d string) message {
-//	return message{mtype: M_NOTIFICATION, notification: notification{
-//		code: CEASE, sub: ADMINISTRATIVE_SHUTDOWN, data: []byte(d),
-//	}}
-//}
-
 type message struct {
-	mtype byte
-	//yopen        open
+	mtype        byte
 	open         xopen
 	notification notification
 	body         []byte
+}
+
+type notification struct {
+	code uint8
+	sub  uint8
+	data []byte
+}
+
+func (n notification) message() []byte {
+	return append([]byte{n.code, n.sub}, n.data[:]...)
+}
+
+func (n *notification) parse(d []byte) bool {
+	if len(d) < 2 {
+		return false
+	}
+	n.code = d[0]
+	n.sub = d[1]
+	n.data = d[2:] // if len(d) is 2 then this will return an empty slice, not a panic
+	return true
 }
 
 type xopen struct {
@@ -95,14 +104,6 @@ func (o *xopen) message() []byte {
 	return append(open, params...)
 }
 
-//func (o *xopen) render() []byte {
-//	return headerise(M_OPEN, o.message())
-//}
-
-//func keepalive() []byte {
-//	return headerise(M_KEEPALIVE, nil)
-//}
-
 type update struct {
 	NextHop       [4]byte
 	NextHop6      [16]byte
@@ -123,13 +124,6 @@ func (u *update) withParameters(p Parameters) (r update) {
 	r.MED = p.MED
 	return
 }
-
-//func (u *update) renderx() (ret [][]byte) {
-//	for _, u := range u.messages(u.RIB) {
-//		ret = append(ret, headerise(M_UPDATE, u))
-//	}
-//	return ret
-//}
 
 func (u *update) messages(m map[netip.Addr]bool) (ret [][]byte) {
 
@@ -223,10 +217,13 @@ func (u *update) message(rib map[netip.Addr]bool) []byte {
 	// (Well-known, Mandatory, Transitive, Complete, Regular length). 2(AS_PATH), 0(bytes, if iBGP - may get updated)
 	as_path := []byte{WTCR, AS_PATH, 0}
 
+	asn := htons(u.ASNumber)
+
 	if u.External {
 		// Each AS path segment is represented by a triple <path segment type, path segment length, path segment value>
 		as_sequence := []byte{AS_SEQUENCE, 1} // AS_SEQUENCE(2), 1 ASN
-		as_sequence = append(as_sequence, htons(u.ASNumber)...)
+		//as_sequence = append(as_sequence, htons(u.ASNumber)...)
+		as_sequence = append(as_sequence, asn[:]...)
 		as_path = append(as_path, as_sequence...)
 		as_path[2] = byte(len(as_sequence)) // update length field
 	}
@@ -242,7 +239,9 @@ func (u *update) message(rib map[netip.Addr]bool) []byte {
 	// rfc4271: A BGP speaker MUST NOT include this attribute in UPDATE messages it sends to external peers ...
 	if !u.External && u.LocalPref > 0 {
 		// (Well-known, Transitive, Complete, Regular length), LOCAL_PREF(5), 4 bytes
-		attr := append([]byte{WTCR, LOCAL_PREF, 4}, htonl(u.LocalPref)...)
+		local_pref := htonl(u.LocalPref)
+		//attr := append([]byte{WTCR, LOCAL_PREF, 4}, htonl(u.LocalPref)...)
+		attr := append([]byte{WTCR, LOCAL_PREF, 4}, local_pref[:]...)
 		path_attributes = append(path_attributes, attr...)
 	}
 
@@ -266,7 +265,8 @@ func (u *update) message(rib map[netip.Addr]bool) []byte {
 
 	if u.MED > 0 {
 		// (Optional, Non-transitive, Complete, Regular length), MULTI_EXIT_DISC(4), 4 bytes
-		attr := append([]byte{ONCR, MULTI_EXIT_DISC, 4}, htonl(u.MED)...)
+		med := htonl(u.MED)
+		attr := append([]byte{ONCR, MULTI_EXIT_DISC, 4}, med[:]...)
 		path_attributes = append(path_attributes, attr...)
 	}
 
@@ -315,11 +315,17 @@ func (u *update) message(rib map[netip.Addr]bool) []byte {
 	//   +-----------------------------------------------------+
 
 	var update []byte
-	update = append(update, htons(uint16(len(withdrawn)))...)
+
+	wd := htons(uint16(len(withdrawn)))
+
+	//update = append(update, htons(uint16(len(withdrawn)))...)
+	update = append(update, wd[:]...)
 	update = append(update, withdrawn...)
 
 	if len(advertise) > 0 || len(advertise6) > 0 || len(withdrawn6) > 0 {
-		update = append(update, htons(uint16(len(path_attributes)))...)
+		pa := htons(uint16(len(path_attributes)))
+		//update = append(update, htons(uint16(len(path_attributes)))...)
+		update = append(update, pa[:]...)
 		update = append(update, path_attributes...)
 		update = append(update, advertise...)
 	} else {

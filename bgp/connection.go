@@ -19,10 +19,8 @@
 package bgp
 
 import (
-	//"fmt"
 	"io"
 	"net"
-	//"regexp"
 	"sync"
 	"time"
 )
@@ -104,22 +102,6 @@ func (c *connection) Local() ([]byte, bool) {
 	}
 
 	return nil, false
-
-	/*
-		      	addrport := c.conn.LocalAddr().String()
-				re4 := regexp.MustCompile(`^(.*):\d+$`)
-				re6 := regexp.MustCompile(`^\[(.*?)(|%.*)\]:\d+$`)
-
-				if m := re6.FindStringSubmatch(addrport); len(m) == 3 {
-					return net.ParseIP(m[1]).To16(), true
-				}
-
-				if m := re4.FindStringSubmatch(addrport); len(m) == 2 {
-					return net.ParseIP(m[1]).To4(), true
-				}
-
-				return nil, false
-	*/
 }
 
 func (c *connection) Close() {
@@ -166,7 +148,6 @@ func (c *connection) queue(t uint8, ms ...message2) {
 	defer c.mutex.Unlock()
 
 	for _, m := range ms {
-		//c.out = append(c.out, headerise(t, m))
 		c.out = append(c.out, addHeader(t, m))
 	}
 
@@ -180,7 +161,6 @@ func (c *connection) write2(t uint8, m ...byte) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 
-	//c.out = append(c.out, headerise(t, m))
 	c.out = append(c.out, addHeader(t, m))
 
 	select {
@@ -278,13 +258,11 @@ func (c *connection) reader() {
 		switch mtype {
 		case M_OPEN:
 			var o xopen
-			o.parse(body)
-			//m = message{mtype: mtype, yopen: newopen(body), xopen: o}
+			o.parse(body) // todo - handle failed parse better (connection gets killed anyway)
 			m = message{mtype: mtype, open: o}
 		case M_NOTIFICATION:
-			//m = message{mtype: mtype, notification: newnotification(body)}
 			var n notification
-			n.parse(body)
+			n.parse(body) // todo - handle failed parse better (connection gets killed anyway)
 			m = message{mtype: mtype, notification: n}
 		default:
 			m = message{mtype: mtype, body: body}

@@ -144,27 +144,24 @@ type Parameters struct {
 	MED         uint32      `json:"med,omitempty"`
 	LocalPref   uint32      `json:"local_pref,omitempty"`
 	Communities []Community `json:"communities,omitempty"`
-	//Accept      []IPNet     `json:"accept,omitempty"`
-	//Reject      []IPNet     `json:"reject,omitempty"`
 
 	Accept []netip.Prefix `json:"accept,omitempty"`
 	Reject []netip.Prefix `json:"reject,omitempty"`
 }
 
-func (a *Parameters) Diff(b Parameters) (r bool) {
-	r = true
+func (a *Parameters) Diff(b Parameters) bool {
 
 	if a.LocalPref != b.LocalPref ||
 		a.MED != b.MED ||
 		len(a.Communities) != len(b.Communities) {
-		return
+		return true
 	}
 
 	// we may get a false positive if the lists are ordered differently
 	// but that's OK
 	for i, c := range a.Communities {
 		if b.Communities[i] != c {
-			return
+			return true
 		}
 	}
 

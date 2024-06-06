@@ -26,16 +26,12 @@
 
 package bgp
 
-import (
-//"fmt"
-//"os"
-)
-
-func htonl(h uint32) []byte {
-	return []byte{byte(h >> 24), byte(h >> 16), byte(h >> 8), byte(h)}
+func htonl(h uint32) [4]byte {
+	return [4]byte{byte(h >> 24), byte(h >> 16), byte(h >> 8), byte(h)}
 }
-func htons(h uint16) []byte {
-	return []byte{byte(h >> 8), byte(h)}
+
+func htons(h uint16) [2]byte {
+	return [2]byte{byte(h >> 8), byte(h)}
 }
 
 const (
@@ -90,6 +86,12 @@ const (
 	OTHER_CONFIGURATION_CHANGE      = 6
 	CONNECTION_COLLISION_RESOLUTION = 7
 	OUT_OF_RESOURCES                = 8
+
+	// Optional/Well-known, Non-transitive/Transitive Complete/Partial Regular/Extended-length
+	// 128 64 32 16 8 4 2 1
+	// 0   1  0  1  0 0 0 0
+	// W   N  C  R  0 0 0 0
+	// O   T  P  E  0 0 0 0
 
 	WTCR = 64  // (Well-known, Transitive, Complete, Regular length)
 	WTCE = 80  // (Well-known, Transitive, Complete, Extended length)
@@ -162,160 +164,3 @@ func note(code, sub uint8) string {
 	}
 	return s
 }
-
-// Optional/Well-known, Non-transitive/Transitive Complete/Partial Regular/Extended-length
-// 128 64 32 16 8 4 2 1
-// 0   1  0  1  0 0 0 0
-// W   N  C  R  0 0 0 0
-// O   T  P  E  0 0 0 0
-
-// func (b open) String() string {
-// 	op := b.op
-// 	type param struct {
-// 		t uint8
-// 		v []byte
-// 	}
-// 	var p []param
-// 	for len(op) > 2 {
-// 		t := op[0]
-// 		l := op[1]
-// 		if 2+int(l) > len(op) {
-// 			break
-// 		}
-// 		v := op[2 : 2+l]
-// 		op = op[2+l:]
-// 		p = append(p, param{t: t, v: v})
-// 	}
-
-// 	return fmt.Sprintf("[VERSION:%d AS:%d HOLD:%d ID:%s OPL:%d %v]", b.version, b.as, b.ht, b.id, len(b.op), p)
-// }
-
-// func (m message) String() string {
-// 	switch m.mtype {
-// 	case M_OPEN:
-// 		return "OPEN:" + m.open.String()
-// 	case M_NOTIFICATION:
-// 		return "NOTIFICATION:" + m.notification.String()
-// 	case M_KEEPALIVE:
-// 		return "KEEPALIVE"
-// 	case M_UPDATE:
-// 		return fmt.Sprintf("UPDATE:%v", m.body)
-// 	}
-// 	return fmt.Sprintf("%d:%v", m.mtype, m.body)
-// }
-
-// func (m message) xheaderise() []byte {
-// 	switch m.mtype {
-// 	case M_OPEN:
-// 		return headerise(m.mtype, m.open.bin())
-// 	case M_NOTIFICATION:
-// 		return headerise(m.mtype, m.notification.bin())
-// 	case M_KEEPALIVE:
-// 		return headerise(m.mtype, []byte{})
-// 	case M_UPDATE:
-// 		return headerise(m.mtype, m.body)
-// 	}
-// 	return headerise(m.mtype, []byte{})
-// }
-
-//type message struct {
-//	mtype byte
-//	//yopen        open
-//	open         xopen
-//	notification notification
-//	body         []byte
-//}
-
-//type open struct {
-//	version byte
-//	as      uint16
-//	ht      uint16
-//	id      IP
-//	op      []byte
-//}
-
-//func newopen(d []byte) open {
-//	var o open
-//	o.version = d[0]
-//	o.as = (uint16(d[1]) << 8) | uint16(d[2])
-//	o.ht = (uint16(d[3]) << 8) | uint16(d[4])
-//	copy(o.id[:], d[5:9])
-//	o.op = d[10:]
-//	return o
-//}
-
-//func (b *open) bin() []byte {
-//	return []byte{b.version, byte(b.as >> 8), byte(b.as), byte(b.ht >> 8), byte(b.ht), b.id[0], b.id[1], b.id[2], b.id[3], 0}
-//}
-
-type notification struct {
-	code uint8
-	sub  uint8
-	data []byte
-}
-
-func (n notification) message() []byte {
-	return append([]byte{n.code, n.sub}, n.data[:]...)
-}
-
-func (n *notification) parse(d []byte) bool {
-	//var n notification
-	if len(d) < 2 {
-		return false
-	}
-	n.code = d[0]
-	n.sub = d[1]
-	n.data = d[2:] // if len(d) is 2 then this will return an empty slice, not a panic
-	return true
-}
-
-//func (n notification) String() string {
-//	return fmt.Sprintf("[CODE:%d SUBCODE:%d DATA:%v]", n.code, n.sub, n.data)
-//}
-
-//func (n notification) messagex() []byte {
-//	return headerise(M_NOTIFICATION, n.bin())
-//}
-
-//func (n notification) bin() []byte {
-//	return append([]byte{n.code, n.sub}, n.data[:]...)
-//}
-
-//func newnotification(d []byte) notification {
-//	var n notification
-//	n.code = d[0]
-//	n.sub = d[1]
-//	n.data = d[2:]
-//	return n
-//}
-
-//func headerise(t byte, d []byte) []byte {
-//	l := 19 + len(d)
-//	p := make([]byte, l)
-//	for n := 0; n < 16; n++ {
-//		p[n] = 0xff
-//	}
-//
-//	p[16] = byte(l >> 8)
-//	p[17] = byte(l & 0xff)
-//	p[18] = t
-//
-//	copy(p[19:], d)
-//
-//	return p
-//}
-
-// func (n notification) reason() string {
-// 	r := fmt.Sprintf("[%d:%d]", n.code, n.sub)
-// 	s := note(n.code, n.sub)
-
-// 	if s != "" {
-// 		r += " " + s
-// 	}
-
-// 	if len(n.data) > 0 {
-// 		r += " (" + string(n.data) + ")"
-// 	}
-
-// 	return r
-// }
