@@ -41,7 +41,9 @@ type Service struct {
 	Port         uint16
 	Protocol     uint8
 	Scheduler    string
+	Persist      uint32
 	Sticky       bool
+	Reset        bool
 	Required     uint8
 	Destinations []Destination
 	available    uint8
