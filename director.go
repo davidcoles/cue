@@ -43,6 +43,7 @@ type Service struct {
 	Scheduler    string
 	Persist      uint32
 	Sticky       bool
+	Reset        bool
 	Required     uint8
 	Destinations []Destination
 	available    uint8
