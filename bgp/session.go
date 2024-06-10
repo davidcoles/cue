@@ -393,9 +393,10 @@ func (s *Session) try(routerid IP, peer string, updates chan Update) (bool, noti
 
 			hold_timer.Reset(hold_time_ns)
 
-			switch m.mtype {
+			switch m.Type() {
 			case M_NOTIFICATION:
-				return true, m.notification
+				n, _ := m.(*notification)
+				return true, *n
 
 			case M_KEEPALIVE:
 				if s.status.State == OPEN_SENT {
@@ -403,24 +404,30 @@ func (s *Session) try(routerid IP, peer string, updates chan Update) (bool, noti
 				}
 
 			case M_OPEN:
+				o, ok := m.(*open)
+				if !ok {
+					return false, notify(FSM_ERROR, 0)
+				}
+
 				if s.status.State != OPEN_SENT {
 					return false, notify(FSM_ERROR, 0)
 				}
 
-				if m.open.version != 4 {
+				//if m.open.version != 4 {
+				if o.version != 4 {
 					return false, notify(OPEN_ERROR, UNSUPPORTED_VERSION_NUMBER)
 				}
 
-				if m.open.holdTime < 3 {
+				if o.holdTime < 3 {
 					return false, notify(OPEN_ERROR, UNNACEPTABLE_HOLD_TIME)
 				}
 
-				if m.open.routerID == routerid {
+				if o.routerID == routerid {
 					return false, notify(OPEN_ERROR, BAD_BGP_ID)
 				}
 
-				if m.open.holdTime < holdtime {
-					holdtime = m.open.holdTime
+				if o.holdTime < holdtime {
+					holdtime = o.holdTime
 					hold_time_ns = time.Duration(holdtime) * time.Second
 					keepalive_time_ns = hold_time_ns / 3
 				}
@@ -428,9 +435,9 @@ func (s *Session) try(routerid IP, peer string, updates chan Update) (bool, noti
 				hold_timer.Reset(hold_time_ns)
 				keepalive_timer.Reset(keepalive_time_ns)
 
-				external = m.open.asNumber != asnumber
+				external = o.asNumber != asnumber
 
-				s.established(holdtime, asnumber, m.open.asNumber)
+				s.established(holdtime, asnumber, o.asNumber)
 
 				conn.queue2(&keepalive{})
 

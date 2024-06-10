@@ -22,13 +22,12 @@ import (
 	"net/netip"
 )
 
-type Message interface {
+type message interface {
 	Type() uint8
 	Body() []byte
 }
 
-type keepalive struct {
-}
+type keepalive struct{}
 
 type notification struct {
 	code uint8
@@ -53,6 +52,14 @@ type fragment []byte
 
 func (f *fragment) Type() uint8  { return M_UPDATE }
 func (f *fragment) Body() []byte { return (*f)[:] }
+
+type other struct {
+	mtype uint8
+	body  []byte
+}
+
+func (o *other) Type() uint8  { return o.mtype }
+func (o *other) Body() []byte { return o.body }
 
 func (n *notification) parse(d []byte) bool {
 	if len(d) < 2 {
@@ -137,7 +144,7 @@ func (u *update) withParameters(p Parameters) (r update) {
 	return
 }
 
-func (u *update) updates(m map[netip.Addr]bool) (ret []Message) {
+func (u *update) updates(m map[netip.Addr]bool) (ret []message) {
 
 	if len(m) < 1 {
 		return nil

@@ -25,14 +25,7 @@ import (
 	"time"
 )
 
-type message struct {
-	mtype        byte
-	open         open
-	notification notification
-	body         []byte
-}
-
-type message2 = []byte
+type pdu []byte
 
 type connection struct {
 	C     chan message
@@ -45,10 +38,10 @@ type connection struct {
 	conn        net.Conn
 
 	mutex sync.Mutex
-	out   []message2
+	out   []pdu
 }
 
-func addHeader(t byte, d []byte) []byte {
+func addHeader(t byte, d []byte) pdu {
 	l := 19 + len(d)
 	p := make([]byte, l)
 	for n := 0; n < 16; n++ {
@@ -115,11 +108,11 @@ func (c *connection) Close() {
 	close(c.close)
 }
 
-func (c *connection) shift() (message2, bool) {
+func (c *connection) shift() (pdu, bool) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 
-	var m message2
+	var m pdu
 
 	if len(c.out) < 1 {
 		return m, false
@@ -136,7 +129,7 @@ func (c *connection) shift() (message2, bool) {
 	return m, true
 }
 
-func (c *connection) write(ms ...message2) {
+func (c *connection) write(ms ...pdu) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 
@@ -150,7 +143,7 @@ func (c *connection) write(ms ...message2) {
 	}
 }
 
-func (c *connection) queue(t uint8, ms ...message2) {
+func (c *connection) queue(t uint8, ms ...pdu) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 
@@ -164,7 +157,7 @@ func (c *connection) queue(t uint8, ms ...message2) {
 	}
 }
 
-func (c *connection) queue2(ms ...Message) {
+func (c *connection) queue2(ms ...message) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 
@@ -280,13 +273,13 @@ func (c *connection) reader() {
 		case M_OPEN:
 			var o open
 			o.parse(body) // todo - handle failed parse better (connection gets killed anyway)
-			m = message{mtype: mtype, open: o}
+			m = &o
 		case M_NOTIFICATION:
 			var n notification
 			n.parse(body) // todo - handle failed parse better (connection gets killed anyway)
-			m = message{mtype: mtype, notification: n}
+			m = &n
 		default:
-			m = message{mtype: mtype, body: body}
+			m = &other{mtype: mtype, body: body}
 		}
 
 		select {
