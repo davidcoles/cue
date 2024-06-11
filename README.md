@@ -1,14 +1,14 @@
 # Cue
 
 A library to manage load balanced services. A balancer implementation
-is passed to as an interface to the `Director`, and configured with a
-list of services which include health check definitions.
-
-Backend servers are added and removed from the balancer's pool by the
-`Director` according to the status of health checks.
+uses the `Director` --- configured with a list of services which
+include health check definitions --- to monitor backed servers and
+notify when state has changed. The balancer can then update the
+data-plane to reflect the backend availability status.
 
 A BGP implementation is included and may be used to advertise healthy
-virtual IP address to the network.
+virtual IP address to the network. Multiprotocol extensions for IPv6
+are now supported.
 
 Primarily this is used in the [vc5](https://github.com/davidcoles/vc5)
 load balancer and is subject to some change.
