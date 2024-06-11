@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
 	"regexp"
 	"strconv"
 )
@@ -43,6 +44,14 @@ func parseIP(ip string) (IP, bool) {
 		addr[n] = byte(a)
 	}
 	return addr, true
+}
+
+func parseIP6(ip string) (r IP6, b bool) {
+	addr, err := netip.ParseAddr(ip)
+	if err != nil || !addr.Is6() {
+		return r, false
+	}
+	return addr.As16(), true
 }
 
 func ip_string(i IP) string {
@@ -125,28 +134,34 @@ type Parameters struct {
 	// only used at session start
 	ASNumber uint16 `json:"as_number,omitempty"`
 	HoldTime uint16 `json:"hold_time,omitempty"`
-	SourceIP IP4    `json:"source_ip,omitempty"`
+	SourceIP IP4    `json:"source_ip,omitempty"` // not sure that this can be used with Dial()
+
+	NextHop4      IP4  `json:"next_hop_4,omitempty"`
+	NextHop6      IP6  `json:"next_hop_6,omitempty"`
+	Multiprotocol bool `json:"multiprotocol,omitempty"`
 
 	// can change during session
 	MED         uint32      `json:"med,omitempty"`
 	LocalPref   uint32      `json:"local_pref,omitempty"`
 	Communities []Community `json:"communities,omitempty"`
-	Accept      []IPNet     `json:"accept,omitempty"`
-	Reject      []IPNet     `json:"reject,omitempty"`
+
+	Accept []netip.Prefix `json:"accept,omitempty"`
+	Reject []netip.Prefix `json:"reject,omitempty"`
 }
 
-func (a *Parameters) Diff(b Parameters) (r bool) {
-	r = true
+func (a *Parameters) Diff(b Parameters) bool {
 
 	if a.LocalPref != b.LocalPref ||
 		a.MED != b.MED ||
 		len(a.Communities) != len(b.Communities) {
-		return
+		return true
 	}
 
+	// we may get a false positive if the lists are ordered differently
+	// but that's OK
 	for i, c := range a.Communities {
 		if b.Communities[i] != c {
-			return
+			return true
 		}
 	}
 
@@ -182,5 +197,35 @@ func (i IP4) string() string {
 }
 
 func (i IP4) String() string {
+	return i.string()
+}
+
+type IP6 [16]byte
+
+func (i *IP6) UnmarshalJSON(d []byte) error {
+	l := len(d)
+	if l < 2 || d[0] != '"' || d[l-1] != '"' {
+		return errors.New("Badly formated IPv6 address: " + string(d))
+	}
+
+	ip, ok := parseIP6(string(d[1 : l-1]))
+
+	if ok {
+		*i = ip
+		return nil
+	}
+	return errors.New("Badly formated IPv6 address: " + string(d))
+}
+
+func (i IP6) MarshalJSON() ([]byte, error) {
+	return []byte(`"` + i.String() + `"`), nil
+}
+
+func (i IP6) string() string {
+	addr := netip.AddrFrom16(i)
+	return addr.String()
+}
+
+func (i IP6) String() string {
 	return i.string()
 }

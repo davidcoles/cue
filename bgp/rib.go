@@ -20,46 +20,78 @@ package bgp
 
 import (
 	"net"
+	"net/netip"
 )
+
+func newupdate(p Parameters, r []IP) Update {
+	var rib []netip.Addr
+	for _, i := range r {
+		rib = append(rib, netip.AddrFrom4(i))
+	}
+	return Update{RIB2: rib, Parameters: p}
+}
+
+func newupdate2(p Parameters, r []netip.Addr) Update {
+	var rib []netip.Addr
+	for _, i := range r {
+		rib = append(rib, i)
+	}
+	return Update{RIB2: rib, Parameters: p}
+}
 
 type Update struct {
 	RIB        []IP
+	RIB2       []netip.Addr
 	Parameters Parameters
 }
 
-func (r *Update) adjRIBOutString() (out []string) {
-	for _, p := range r.Parameters.Filter(r.RIB) {
-		out = append(out, ip_string(p))
+func (r *Update) adjRIBOutString(ipv6 bool) (out []string) {
+	for _, p := range r.Filter(ipv6) {
+		out = append(out, p.String())
 	}
 	return
 }
 
-func (r *Update) adjRIBOut() []IP {
-	return r.Parameters.Filter(r.RIB)
+func (r *Update) adjRIBOut(ipv6 bool) (out []netip.Addr) {
+	return r.Filter(ipv6)
 }
 
-func (r *Update) adjRIBOutP() ([]IP, Parameters) {
-	return r.Parameters.Filter(r.RIB), r.Parameters
+func (u *Update) Initial(ipv6 bool) map[netip.Addr]bool {
+	out := map[netip.Addr]bool{}
+	for _, i := range u.Filter(ipv6) {
+		out[i] = true
+	}
+	return out
 }
 
-func (r *Update) Filter() []IP {
-	return r.Parameters.Filter(r.RIB)
+func (r *Update) adjRIBOutP(ipv6 bool) ([]netip.Addr, Parameters) {
+	return r.Filter(ipv6), r.Parameters
 }
 
-func (p *Parameters) Filter(dest []IP) []IP {
-	var pass []IP
+func (u *Update) Filter(ipv6 bool) []netip.Addr {
+	return u.Parameters.Filter(ipv6, u.RIB2)
+}
+
+func (p *Parameters) Filter(ipv6 bool, dest []netip.Addr) (pass []netip.Addr) {
 
 filter:
 	for _, i := range dest {
 
-		ip := net.ParseIP(ip_string(i))
+		if !p.Multiprotocol {
 
-		if ip == nil {
-			continue
+			if i.Is6() && !ipv6 {
+				continue
+			}
+
+			if i.Is4() && ipv6 {
+				continue
+			}
 		}
 
+		ip := i
+
 		for _, ipnet := range p.Accept {
-			n := net.IPNet(ipnet)
+			n := ipnet
 			if n.Contains(ip) {
 				pass = append(pass, i)
 				continue filter
@@ -67,7 +99,7 @@ filter:
 		}
 
 		for _, ipnet := range p.Reject {
-			n := net.IPNet(ipnet)
+			n := ipnet
 			if n.Contains(ip) {
 				continue filter
 			}
@@ -102,14 +134,6 @@ func Filter(dest []IP, filter []IP) []IP {
 	return o
 }
 
-func (r *Update) full() map[IP]bool {
-	n := map[IP]bool{}
-	for _, ip := range r.adjRIBOut() {
-		n[ip] = true
-	}
-	return n
-}
-
 func advertise(r []IP) map[IP]bool {
 	n := map[IP]bool{}
 	for _, ip := range r {
@@ -139,22 +163,53 @@ func (u *Update) Source() net.IP {
 	return net.ParseIP(ip_string(u.Parameters.SourceIP))
 }
 
-func (c *Update) updates(p Update) (uint64, uint64, map[IP]bool) {
-	nrli := map[IP]bool{}
+func NLRI(curr, prev []netip.Addr, force bool) ([]netip.Addr, map[netip.Addr]bool) {
+	out := map[netip.Addr]bool{}
+
+	new := map[netip.Addr]bool{}
+	old := map[netip.Addr]bool{}
+
+	for _, i := range curr {
+		new[i] = true
+	}
+
+	for _, i := range prev {
+		old[i] = true
+	}
+
+	// if IP was in the previous list but not in the new list then withdraw
+	for i, _ := range old {
+		if _, ok := new[i]; !ok {
+			out[i] = false
+		}
+	}
+
+	// if force readvertise or IP is in the current list but not in the old one then advertise
+	for i, _ := range new {
+		if _, ok := old[i]; !ok || force {
+			out[i] = true
+		}
+	}
+
+	return curr, out
+}
+
+func (c *Update) updates(p Update, ipv6 bool) (uint64, uint64, map[netip.Addr]bool) {
+	nrli := map[netip.Addr]bool{}
 
 	var advertise uint64
 	var withdraw uint64
 
 	var vary bool = c.Parameters.Diff(p.Parameters)
 
-	curr := map[IP]bool{}
-	prev := map[IP]bool{}
+	curr := map[netip.Addr]bool{}
+	prev := map[netip.Addr]bool{}
 
-	for _, ip := range c.adjRIBOut() {
+	for _, ip := range c.adjRIBOut(ipv6) {
 		curr[ip] = true
 	}
 
-	for _, ip := range p.adjRIBOut() {
+	for _, ip := range p.adjRIBOut(ipv6) {
 		prev[ip] = true
 	}
 
@@ -175,31 +230,4 @@ func (c *Update) updates(p Update) (uint64, uint64, map[IP]bool) {
 	}
 
 	return advertise, withdraw, nrli
-}
-
-func RIBSDiffer(a, b []IP) bool {
-
-	x := map[IP]bool{}
-	for _, i := range a {
-		x[i] = true
-	}
-
-	y := map[IP]bool{}
-	for _, i := range b {
-		y[i] = true
-	}
-
-	if len(y) != len(y) {
-		return true
-	}
-
-	for i, _ := range x {
-		_, ok := y[i]
-		if !ok {
-			return true
-		}
-		delete(y, i)
-	}
-
-	return len(y) != 0
 }

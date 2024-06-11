@@ -20,6 +20,7 @@ package bgp
 
 import (
 	"fmt"
+	"net/netip"
 	"sync"
 	"time"
 )
@@ -50,7 +51,6 @@ type Status struct {
 	RemoteASN         uint16        `json:"remote_asn"`
 	AdjRIBOut         []string      `json:"adj_rib_out"`
 	LocalIP           string        `json:"local_ip"`
-	//EBGP              bool          `json:""`
 }
 
 const (
@@ -63,18 +63,40 @@ const (
 type Session struct {
 	c      chan Update
 	p      Parameters
-	r      []IP
+	rib    []netip.Addr
 	status Status
 	mutex  sync.Mutex
 	update Update
-	log    BGPNotify
+	logs   BGPNotify
+}
+
+func (s *Session) log() BGPNotify {
+	if s.logs == nil {
+		return &nul{}
+	}
+	return s.logs
+}
+
+func toaddr(in []IP) (out []netip.Addr) {
+	for _, i := range in {
+		out = append(out, netip.AddrFrom4(i))
+	}
+	return
 }
 
 func NewSession(id IP, peer string, p Parameters, r []IP, l BGPNotify) *Session {
-	s := &Session{p: p, r: r, log: l, status: Status{State: IDLE}, update: Update{RIB: r, Parameters: p}}
+	s := &Session{p: p, rib: toaddr(r), logs: l, status: Status{State: IDLE}, update: newupdate(p, r)}
 	s.c = s.session(id, peer)
 	return s
+}
 
+func (s *Session) Start(id IP, peer string, p Parameters, r []netip.Addr, l BGPNotify) {
+	s.p = p
+	s.rib = r
+	s.logs = l
+	s.status = Status{State: IDLE}
+	s.update = newupdate2(p, r)
+	s.c = s.session(id, peer)
 }
 
 func (s *Session) Status() Status {
@@ -85,16 +107,25 @@ func (s *Session) Status() Status {
 }
 
 func (s *Session) RIB(r []IP) {
-	s.r = r
-	s.c <- Update{RIB: s.r, Parameters: s.p}
+	s.rib = toaddr(r)
+	s.c <- newupdate2(s.p, s.rib)
+}
+
+func (s *Session) LocRIB(r []netip.Addr) {
+	s.rib = r
+	s.c <- newupdate2(s.p, s.rib)
 }
 
 func (s *Session) Configure(p Parameters) {
 	s.p = p
-	s.c <- Update{RIB: s.r, Parameters: s.p}
+	s.c <- newupdate2(s.p, s.rib)
 }
 
 func (s *Session) Close() {
+	close(s.c)
+}
+
+func (s *Session) Stop() {
 	close(s.c)
 }
 
@@ -106,7 +137,6 @@ func (s *Session) state2(state string) {
 func (s *Session) state(state string) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
-	//s.status.State = state
 	s.state2(state)
 }
 
@@ -120,21 +150,18 @@ func (s *Session) error(error string) string {
 func (s *Session) established(ht uint16, local, remote uint16) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
-	//s.status.State = ESTABLISHED
 	s.state2(ESTABLISHED)
 	s.status.Established++
 	s.status.LastError = ""
 	s.status.HoldTime = ht
 	s.status.LocalASN = local
 	s.status.RemoteASN = remote
-	//s.status.EBGP = local != remote
 }
 
 func (s *Session) active(ht uint16, local uint16, ip [4]byte) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
-	//s.status.State = ACTIVE
 	s.state2(ACTIVE)
 	s.status.Attempts++
 
@@ -145,24 +172,38 @@ func (s *Session) active(ht uint16, local uint16, ip [4]byte) {
 	s.status.HoldTime = ht
 	s.status.LocalASN = local
 	s.status.RemoteASN = 0
-	//s.status.EBGP = false
 	s.status.LocalIP = ip_string(ip)
 }
 func (s *Session) connect() {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
-	//s.status.State = CONNECT
 	s.state2(CONNECT)
 	s.status.Connections++
 }
 
-func (s *Session) update_stats(a, w uint64, d time.Duration, r []string) {
+func (s *Session) update_stats(d time.Duration, r []netip.Addr, n map[netip.Addr]bool) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
+
+	var a, w uint64
+
+	var rib []string
+	for _, ip := range r {
+		rib = append(rib, ip.String())
+	}
+
+	for _, v := range n {
+		if v {
+			a++
+		} else {
+			w++
+		}
+	}
+
 	s.status.Advertised += a
 	s.status.Withdrawn += w
 	s.status.UpdateCalculation = d / time.Millisecond
-	s.status.AdjRIBOut = r
+	s.status.AdjRIBOut = rib
 	s.status.Prefixes = len(r)
 }
 
@@ -183,7 +224,7 @@ func (s *Session) session(id IP, peer string) chan Update {
 		for {
 			select {
 			case <-timer.C:
-				s.log.BGPSession(peer, true, "Connecting ...")
+				s.log().BGPSession(peer, true, "Connecting ...")
 				b, n := s.try(id, peer, updates)
 				var e string
 
@@ -193,7 +234,7 @@ func (s *Session) session(id IP, peer string) chan Update {
 						e += " (" + string(n.data) + ")"
 					}
 
-					s.log.BGPSession(peer, false, e)
+					s.log().BGPSession(peer, false, e)
 
 				} else {
 					if n.code == 0 {
@@ -206,9 +247,9 @@ func (s *Session) session(id IP, peer string) chan Update {
 					}
 
 					if n.code == 0 && n.sub == LOCAL_SHUTDOWN {
-						s.log.BGPSession(peer, true, e)
+						s.log().BGPSession(peer, true, e)
 					} else {
-						s.log.BGPSession(peer, false, e) // treat as "remote" as it was a failed connection, not a local shutdown
+						s.log().BGPSession(peer, false, e) // treat as "remote" as it was a failed connection, not a local shutdown
 					}
 				}
 
@@ -237,6 +278,10 @@ func (s *Session) idle() {
 
 func (s *Session) try(routerid IP, peer string, updates chan Update) (bool, notification) {
 
+	nexthop4 := s.update.Parameters.NextHop4
+	nexthop6 := s.update.Parameters.NextHop6
+	multiprotocol := s.update.Parameters.Multiprotocol
+
 	asnumber := s.update.Parameters.ASNumber
 	holdtime := s.update.Parameters.HoldTime
 	sourceip := s.update.Parameters.SourceIP
@@ -250,7 +295,7 @@ func (s *Session) try(routerid IP, peer string, updates chan Update) (bool, noti
 
 	s.active(holdtime, asnumber, localip)
 
-	conn, err := new_connection(localip, peer)
+	conn, err := new_connection2(localip, peer)
 
 	if err != nil {
 		return false, local(CONNECTION_FAILED, err.Error())
@@ -258,25 +303,39 @@ func (s *Session) try(routerid IP, peer string, updates chan Update) (bool, noti
 
 	defer conn.Close()
 
-	var nul [4]byte
+	var local6 [16]byte
 
-	localip = conn.Local()
+	loc, ok := conn.Local()
 
-	if localip == nul {
-		return false, local(INVALID_LOCALIP, err.Error())
+	if !ok {
+		return false, local(INVALID_LOCALIP, "No local address")
 	}
 
-	//s.active(holdtime, asnumber, localip) // locks mutex
+	var ipv6 bool
+
+	var localaddr string
+
+	if len(loc) == 4 {
+		copy(localip[:], loc[:])
+		localaddr = netip.AddrFrom4(localip).String()
+	} else if len(loc) == 16 {
+		copy(local6[:], loc[:])
+		ipv6 = true
+		localaddr = netip.AddrFrom16(local6).String()
+	} else {
+		return false, local(INVALID_LOCALIP, "No local address")
+	}
+
 	s.mutex.Lock()
 	s.status.HoldTime = holdtime
-	s.status.LocalIP = ip_string(localip)
+	s.status.LocalIP = localaddr
 	s.mutex.Unlock()
-
-	nexthop := localip
 
 	s.connect()
 
-	conn.write(openMessage(asnumber, holdtime, routerid))
+	o := open{asNumber: asnumber, holdTime: holdtime, routerID: routerid, multiprotocol: true}
+	//conn.queue(M_OPEN, o.message())
+	conn.queue2(&o)
 
 	s.state(OPEN_SENT)
 
@@ -288,6 +347,42 @@ func (s *Session) try(routerid IP, peer string, updates chan Update) (bool, noti
 	keepalive_timer := time.NewTicker(keepalive_time_ns)
 	defer keepalive_timer.Stop()
 
+	var nul4 IP4
+	var nul6 IP6
+
+	if nexthop4 == nul4 {
+		nexthop4 = localip
+	}
+
+	if nexthop6 == nul6 {
+		nexthop6 = local6
+	}
+
+	if nexthop4 == nul4 {
+		// fall back to routerid if we have nothing better for ipv4 next hop
+		//  should only happen if the session was established over IPv6
+		nexthop4 = routerid
+	}
+
+	var nlri map[netip.Addr]bool
+	var adjRIBOut []netip.Addr
+	var parameters Parameters
+
+	notify := func(code, sub byte) notification {
+		n := notification{code: code, sub: sub}
+		conn.queue2(&n)
+		return n
+	}
+
+	updateTemplate := update{
+		IPv6:          ipv6,
+		ASNumber:      asnumber,
+		External:      external,
+		NextHop:       nexthop4,
+		NextHop6:      nexthop6,
+		Multiprotocol: multiprotocol,
+	}
+
 	for {
 		select {
 		case m, ok := <-conn.C:
@@ -298,44 +393,41 @@ func (s *Session) try(routerid IP, peer string, updates chan Update) (bool, noti
 
 			hold_timer.Reset(hold_time_ns)
 
-			switch m.mtype {
+			switch m.Type() {
 			case M_NOTIFICATION:
-				return true, m.notification
+				n, _ := m.(*notification)
+				return true, *n
 
 			case M_KEEPALIVE:
 				if s.status.State == OPEN_SENT {
-					n := notificationMessage(FSM_ERROR, 0)
-					conn.write(n)
-					return false, n.notification
+					return false, notify(FSM_ERROR, 0)
 				}
 
 			case M_OPEN:
+				o, ok := m.(*open)
+				if !ok {
+					return false, notify(FSM_ERROR, 0)
+				}
+
 				if s.status.State != OPEN_SENT {
-					n := notificationMessage(FSM_ERROR, 0)
-					conn.write(notificationMessage(FSM_ERROR, 0))
-					return false, n.notification
+					return false, notify(FSM_ERROR, 0)
 				}
 
-				if m.open.version != 4 {
-					n := notificationMessage(OPEN_ERROR, UNSUPPORTED_VERSION_NUMBER)
-					conn.write(n)
-					return false, n.notification
+				//if m.open.version != 4 {
+				if o.version != 4 {
+					return false, notify(OPEN_ERROR, UNSUPPORTED_VERSION_NUMBER)
 				}
 
-				if m.open.ht < 3 {
-					n := notificationMessage(OPEN_ERROR, UNNACEPTABLE_HOLD_TIME)
-					conn.write(n)
-					return false, n.notification
+				if o.holdTime < 3 {
+					return false, notify(OPEN_ERROR, UNNACEPTABLE_HOLD_TIME)
 				}
 
-				if m.open.id == routerid {
-					n := notificationMessage(OPEN_ERROR, BAD_BGP_ID)
-					conn.write(n)
-					return false, n.notification
+				if o.routerID == routerid {
+					return false, notify(OPEN_ERROR, BAD_BGP_ID)
 				}
 
-				if m.open.ht < holdtime {
-					holdtime = m.open.ht
+				if o.holdTime < holdtime {
+					holdtime = o.holdTime
 					hold_time_ns = time.Duration(holdtime) * time.Second
 					keepalive_time_ns = hold_time_ns / 3
 				}
@@ -343,62 +435,79 @@ func (s *Session) try(routerid IP, peer string, updates chan Update) (bool, noti
 				hold_timer.Reset(hold_time_ns)
 				keepalive_timer.Reset(keepalive_time_ns)
 
-				external = m.open.as != asnumber
+				external = o.asNumber != asnumber
 
-				s.established(holdtime, asnumber, m.open.as)
+				s.established(holdtime, asnumber, o.asNumber)
 
-				conn.write(keepaliveMessage())
+				conn.queue2(&keepalive{})
 
 				t := time.Now()
-				aro, p := s.update.adjRIBOutP()
-				//conn.write(updateMessage(nexthop, asnumber, p, external, advertise(aro)))
-				conn.write(_updateMessage(nexthop, asnumber, p.LocalPref, p.MED, p.Communities, external, advertise(aro)))
-				s.update_stats(uint64(len(aro)), 0, time.Now().Sub(t), to_string(aro))
+				p := s.update.Parameters
+				u := updateTemplate.withParameters(p)
+
+				// initial NLRI will simply advertise any initial addresses in the RIB
+				adjRIBOut, nlri = NLRI(s.update.adjRIBOut(ipv6), nil, false)
+				parameters = p
+
+				//fmt.Println("Init:", adjRIBOut, nlri)
+
+				if len(nlri) > 0 {
+					if updates := u.updates(nlri); len(updates) < 1 {
+						return false, notify(CEASE, OUT_OF_RESOURCES)
+					} else {
+						conn.queue2(updates...)
+					}
+				}
+
+				s.update_stats(time.Now().Sub(t), adjRIBOut, nlri)
 
 			case M_UPDATE:
 				if s.status.State != ESTABLISHED {
-					n := notificationMessage(FSM_ERROR, 0)
-					conn.write(n)
-					return false, n.notification
+					return false, notify(FSM_ERROR, 0)
 				}
-				// we just ignore updates!
+				// we don't process update contents because we don't need to do any routing
 
 			default:
-				n := notificationMessage(MESSAGE_HEADER_ERROR, BAD_MESSAGE_TYPE)
-				conn.write(n)
-				return false, n.notification
+				return false, notify(MESSAGE_HEADER_ERROR, BAD_MESSAGE_TYPE)
 			}
 
 		case r, ok := <-updates:
 
 			if !ok {
-				//conn.write(notificationMessage(CEASE, ADMINISTRATIVE_SHUTDOWN))
-				conn.write(shutdownMessage("That's all, folks!"))
-				return false, local(LOCAL_SHUTDOWN, "")
+				return false, notify(CEASE, ADMINISTRATIVE_SHUTDOWN)
 			}
 
 			if s.status.State == ESTABLISHED {
 				t := time.Now()
-				a, w, nlris := r.updates(s.update)
-				if len(nlris) != 0 {
-					//conn.write(updateMessage(nexthop, asnumber, r.Parameters, external, nlris))
-					p := r.Parameters
-					conn.write(_updateMessage(nexthop, asnumber, p.LocalPref, p.MED, p.Communities, external, nlris))
+				p := r.Parameters
+				u := updateTemplate.withParameters(p)
+
+				// calculate NLRI to transmit - force re-advertisement if parameters have changed (MED, local-pref, communities)
+				adjRIBOut, nlri = NLRI(r.adjRIBOut(ipv6), adjRIBOut, parameters.Diff(p))
+				parameters = p
+
+				//fmt.Println("Update:", adjRIBOut, nlri)
+
+				if len(nlri) > 0 {
+					if updates := u.updates(nlri); len(updates) < 1 {
+						return false, notify(CEASE, OUT_OF_RESOURCES)
+					} else {
+						conn.queue2(updates...)
+					}
 				}
-				s.update_stats(a, w, time.Now().Sub(t), r.adjRIBOutString())
+
+				s.update_stats(time.Now().Sub(t), adjRIBOut, nlri)
 			}
 
 			s.update = r
 
 		case <-keepalive_timer.C:
 			if s.status.State == ESTABLISHED {
-				conn.write(keepaliveMessage())
+				conn.queue2(&keepalive{})
 			}
 
 		case <-hold_timer.C:
-			n := notificationMessage(HOLD_TIMER_EXPIRED, 0)
-			conn.write(n)
-			return false, n.notification
+			return false, notify(HOLD_TIMER_EXPIRED, 0)
 		}
 	}
 

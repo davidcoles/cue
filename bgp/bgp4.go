@@ -26,16 +26,12 @@
 
 package bgp
 
-import (
-	"fmt"
-	//"os"
-)
-
-func htonl(h uint32) []byte {
-	return []byte{byte(h >> 24), byte(h >> 16), byte(h >> 8), byte(h)}
+func htonl(h uint32) [4]byte {
+	return [4]byte{byte(h >> 24), byte(h >> 16), byte(h >> 8), byte(h)}
 }
-func htons(h uint16) []byte {
-	return []byte{byte(h >> 8), byte(h)}
+
+func htons(h uint16) [2]byte {
+	return [2]byte{byte(h >> 8), byte(h)}
 }
 
 const (
@@ -47,12 +43,21 @@ const (
 	IGP = 0
 	EGP = 1
 
+	//https://www.rfc-editor.org/rfc/rfc3392.txt
+	CAPABILITIES_OPTIONAL_PARAMETER = 2 // Capabilities Optional Parameter (Parameter Type 2)
+
+	// https://www.iana.org/assignments/capability-codes/capability-codes.xhtml
+	BGP4_MP = 1 //Multiprotocol Extensions for BGP-4
+
+	// Path attribute types
 	ORIGIN          = 1
 	AS_PATH         = 2
 	NEXT_HOP        = 3
 	MULTI_EXIT_DISC = 4
 	LOCAL_PREF      = 5
 	COMMUNITIES     = 8
+	MP_REACH_NLRI   = 14 // Multiprotocol Reachable NLRI - MP_REACH_NLRI (Type Code 14)
+	MP_UNREACH_NLRI = 15 // Multiprotocol Unreachable NLRI - MP_UNREACH_NLRI (Type Code 15)
 
 	AS_SET      = 1
 	AS_SEQUENCE = 2
@@ -73,9 +78,6 @@ const (
 	UNNACEPTABLE_HOLD_TIME     = 6
 
 	// CEASE
-	//ADMINISTRATIVE_SHUTDOWN = 2
-	//ADMINISTRATIVE_RESET    = 4
-
 	MAXIMUM_PREFIXES_REACHED        = 1
 	ADMINISTRATIVE_SHUTDOWN         = 2
 	PEER_DECONFIGURED               = 3
@@ -85,10 +87,18 @@ const (
 	CONNECTION_COLLISION_RESOLUTION = 7
 	OUT_OF_RESOURCES                = 8
 
+	// Optional/Well-known, Non-transitive/Transitive Complete/Partial Regular/Extended-length
+	// 128 64 32 16 8 4 2 1
+	// 0   1  0  1  0 0 0 0
+	// W   N  C  R  0 0 0 0
+	// O   T  P  E  0 0 0 0
+
 	WTCR = 64  // (Well-known, Transitive, Complete, Regular length)
 	WTCE = 80  // (Well-known, Transitive, Complete, Extended length)
 	ONCR = 128 // (Optional, Non-transitive, Complete, Regular length)
+	ONCE = 144 // (Optional, Non-transitive, Complete, Extended length)
 	OTCR = 192 // (Optional, Transitive, Complete, Regular length)
+	OTCE = 208 // (Optional, Transitive, Complete, Extended length)
 )
 
 func note(code, sub uint8) string {
@@ -153,144 +163,4 @@ func note(code, sub uint8) string {
 		}
 	}
 	return s
-}
-
-// Optional/Well-known, Non-transitive/Transitive Complete/Partial Regular/Extended-length
-// 128 64 32 16 8 4 2 1
-// 0   1  0  1  0 0 0 0
-// W   N  C  R  0 0 0 0
-// O   T  P  E  0 0 0 0
-
-type open struct {
-	version byte
-	as      uint16
-	ht      uint16
-	id      IP
-	op      []byte
-}
-
-func (b open) String() string {
-	op := b.op
-	type param struct {
-		t uint8
-		v []byte
-	}
-	var p []param
-	for len(op) > 2 {
-		t := op[0]
-		l := op[1]
-		if 2+int(l) > len(op) {
-			break
-		}
-		v := op[2 : 2+l]
-		op = op[2+l:]
-		p = append(p, param{t: t, v: v})
-	}
-
-	return fmt.Sprintf("[VERSION:%d AS:%d HOLD:%d ID:%s OPL:%d %v]", b.version, b.as, b.ht, b.id, len(b.op), p)
-}
-
-func (m message) String() string {
-	switch m.mtype {
-	case M_OPEN:
-		return "OPEN:" + m.open.String()
-	case M_NOTIFICATION:
-		return "NOTIFICATION:" + m.notification.String()
-	case M_KEEPALIVE:
-		return "KEEPALIVE"
-	case M_UPDATE:
-		return fmt.Sprintf("UPDATE:%v", m.body)
-	}
-	return fmt.Sprintf("%d:%v", m.mtype, m.body)
-}
-
-func (m message) headerise() []byte {
-	switch m.mtype {
-	case M_OPEN:
-		return headerise(m.mtype, m.open.bin())
-	case M_NOTIFICATION:
-		return headerise(m.mtype, m.notification.bin())
-	case M_KEEPALIVE:
-		return headerise(m.mtype, []byte{})
-	case M_UPDATE:
-		return headerise(m.mtype, m.body)
-	}
-	return headerise(m.mtype, []byte{})
-}
-
-type message struct {
-	mtype        byte
-	open         open
-	notification notification
-	body         []byte
-}
-
-func newopen(d []byte) open {
-	var o open
-	o.version = d[0]
-	o.as = (uint16(d[1]) << 8) | uint16(d[2])
-	o.ht = (uint16(d[3]) << 8) | uint16(d[4])
-	copy(o.id[:], d[5:9])
-	o.op = d[10:]
-	return o
-}
-
-type notification struct {
-	code uint8
-	sub  uint8
-	data []byte
-}
-
-func (n notification) String() string {
-	return fmt.Sprintf("[CODE:%d SUBCODE:%d DATA:%v]", n.code, n.sub, n.data)
-}
-
-func (n notification) message() []byte {
-	return headerise(M_NOTIFICATION, n.bin())
-}
-
-func (n notification) bin() []byte {
-	return append([]byte{n.code, n.sub}, n.data[:]...)
-}
-func newnotification(d []byte) notification {
-	var n notification
-	n.code = d[0]
-	n.sub = d[1]
-	n.data = d[2:]
-	return n
-}
-
-func (b *open) bin() []byte {
-	return []byte{b.version, byte(b.as >> 8), byte(b.as), byte(b.ht >> 8), byte(b.ht), b.id[0], b.id[1], b.id[2], b.id[3], 0}
-}
-
-func headerise(t byte, d []byte) []byte {
-	l := 19 + len(d)
-	p := make([]byte, l)
-	for n := 0; n < 16; n++ {
-		p[n] = 0xff
-	}
-
-	p[16] = byte(l >> 8)
-	p[17] = byte(l & 0xff)
-	p[18] = t
-
-	copy(p[19:], d)
-
-	return p
-}
-
-func (n notification) reason() string {
-	r := fmt.Sprintf("[%d:%d]", n.code, n.sub)
-	s := note(n.code, n.sub)
-
-	if s != "" {
-		r += " " + s
-	}
-
-	if len(n.data) > 0 {
-		r += " (" + string(n.data) + ")"
-	}
-
-	return r
 }

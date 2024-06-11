@@ -21,12 +21,13 @@ package bgp
 import (
 	"io"
 	"net"
-	"regexp"
 	"sync"
 	"time"
 )
 
-type myconn struct {
+type pdu []byte
+
+type connection struct {
 	C     chan message
 	Error string
 
@@ -37,11 +38,26 @@ type myconn struct {
 	conn        net.Conn
 
 	mutex sync.Mutex
-	out   []message
+	out   []pdu
 }
 
-// func new_connection(local net.IP, peer string) (*myconn, error) {
-func new_connection(local IP4, peer string) (*myconn, error) {
+func addHeader(t byte, d []byte) pdu {
+	l := 19 + len(d)
+	p := make([]byte, l)
+	for n := 0; n < 16; n++ {
+		p[n] = 0xff
+	}
+
+	p[16] = byte(l >> 8)
+	p[17] = byte(l & 0xff)
+	p[18] = t
+
+	copy(p[19:], d)
+
+	return p
+}
+
+func new_connection2(local IP4, peer string) (*connection, error) {
 	var nul IP4
 
 	dialer := net.Dialer{
@@ -64,7 +80,7 @@ func new_connection(local IP4, peer string) (*myconn, error) {
 		return nil, err
 	}
 
-	c := &myconn{
+	c := &connection{
 		C:           make(chan message),
 		close:       make(chan bool),
 		writer_exit: make(chan bool),
@@ -79,38 +95,24 @@ func new_connection(local IP4, peer string) (*myconn, error) {
 	return c, nil
 }
 
-func (c *myconn) Local() IP {
-	var nul [4]byte
+func (c *connection) Local() ([]byte, bool) {
 
-	addrport := c.conn.LocalAddr().String()
-
-	re := regexp.MustCompile(`^(.*):\d+$`)
-
-	m := re.FindStringSubmatch(addrport)
-
-	if len(m) != 2 {
-		return nul
+	if a, ok := c.conn.LocalAddr().(*net.TCPAddr); ok {
+		return a.IP, true
 	}
 
-	addr := m[1]
-
-	ip := net.ParseIP(addr).To4()
-
-	if ip == nil {
-		return [4]byte{0, 0, 0, 0}
-	}
-	return [4]byte{ip[0], ip[1], ip[2], ip[3]}
+	return nil, false
 }
 
-func (c *myconn) Close() {
+func (c *connection) Close() {
 	close(c.close)
 }
 
-func (c *myconn) shift() (message, bool) {
+func (c *connection) shift() (pdu, bool) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 
-	var m message
+	var m pdu
 
 	if len(c.out) < 1 {
 		return m, false
@@ -127,11 +129,13 @@ func (c *myconn) shift() (message, bool) {
 	return m, true
 }
 
-func (c *myconn) write(m message) {
+func (c *connection) write(ms ...pdu) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 
-	c.out = append(c.out, m)
+	for _, m := range ms {
+		c.out = append(c.out, m)
+	}
 
 	select {
 	case c.pending <- true:
@@ -139,7 +143,47 @@ func (c *myconn) write(m message) {
 	}
 }
 
-func (c *myconn) drain() bool {
+func (c *connection) queue(t uint8, ms ...pdu) {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+
+	for _, m := range ms {
+		c.out = append(c.out, addHeader(t, m))
+	}
+
+	select {
+	case c.pending <- true:
+	default:
+	}
+}
+
+func (c *connection) queue2(ms ...message) {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+
+	for _, m := range ms {
+		c.out = append(c.out, addHeader(m.Type(), m.Body()))
+	}
+
+	select {
+	case c.pending <- true:
+	default:
+	}
+}
+
+func (c *connection) write2(t uint8, m ...byte) {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+
+	c.out = append(c.out, addHeader(t, m))
+
+	select {
+	case c.pending <- true:
+	default:
+	}
+}
+
+func (c *connection) drain() bool {
 
 	for {
 		m, ok := c.shift()
@@ -150,7 +194,8 @@ func (c *myconn) drain() bool {
 
 		c.conn.SetWriteDeadline(time.Now().Add(3 * time.Second))
 
-		_, err := c.conn.Write(m.headerise())
+		_, err := c.conn.Write(m)
+
 		if err != nil {
 			c.Error = err.Error()
 			return false
@@ -158,7 +203,7 @@ func (c *myconn) drain() bool {
 	}
 }
 
-func (c *myconn) writer() {
+func (c *connection) writer() {
 	defer close(c.writer_exit)
 	defer c.conn.Close()
 
@@ -181,7 +226,7 @@ func (c *myconn) writer() {
 	}
 }
 
-func (c *myconn) reader() {
+func (c *connection) reader() {
 
 	defer close(c.reader_exit)
 	defer close(c.C)
@@ -226,11 +271,15 @@ func (c *myconn) reader() {
 
 		switch mtype {
 		case M_OPEN:
-			m = message{mtype: mtype, open: newopen(body)}
+			var o open
+			o.parse(body) // todo - handle failed parse better (connection gets killed anyway)
+			m = &o
 		case M_NOTIFICATION:
-			m = message{mtype: mtype, notification: newnotification(body)}
+			var n notification
+			n.parse(body) // todo - handle failed parse better (connection gets killed anyway)
+			m = &n
 		default:
-			m = message{mtype: mtype, body: body}
+			m = &other{mtype: mtype, body: body}
 		}
 
 		select {
