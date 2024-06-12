@@ -48,10 +48,10 @@ func (o *open) Body() []byte { return o.message() }
 func (k *keepalive) Type() uint8  { return M_KEEPALIVE }
 func (k *keepalive) Body() []byte { return nil }
 
-type fragment []byte
+type update []byte
 
-func (f *fragment) Type() uint8  { return M_UPDATE }
-func (f *fragment) Body() []byte { return (*f)[:] }
+func (f *update) Type() uint8  { return M_UPDATE }
+func (f *update) Body() []byte { return (*f)[:] }
 
 type other struct {
 	mtype uint8
@@ -123,7 +123,7 @@ func (o *open) message() []byte {
 	return append(open, params...)
 }
 
-type update struct {
+type advert struct {
 	NextHop       [4]byte
 	NextHop6      [16]byte
 	ASNumber      uint16
@@ -136,21 +136,21 @@ type update struct {
 	IPv6          bool
 }
 
-func (u *update) withParameters(p Parameters) (r update) {
-	r = *u
+func (a *advert) withParameters(p Parameters) (r advert) {
+	r = *a
 	r.Communities = p.Communities
 	r.LocalPref = p.LocalPref
 	r.MED = p.MED
 	return
 }
 
-func (u *update) updates(m map[netip.Addr]bool) (ret []message) {
+func (a *advert) updates(m map[netip.Addr]bool) (ret []message) {
 
 	if len(m) < 1 {
 		return nil
 	}
 
-	msg := u.message(m)
+	msg := a.message(m)
 
 	if len(msg) < 4000 {
 		return append(ret, &msg)
@@ -179,13 +179,13 @@ func (u *update) updates(m map[netip.Addr]bool) (ret []message) {
 		n++
 	}
 
-	if m := u.updates(m1); len(m) < 1 {
+	if m := a.updates(m1); len(m) < 1 {
 		return nil
 	} else {
 		ret = append(ret, m...)
 	}
 
-	if m := u.updates(m2); len(m) < 1 {
+	if m := a.updates(m2); len(m) < 1 {
 		return nil
 	} else {
 		ret = append(ret, m...)
@@ -195,10 +195,10 @@ func (u *update) updates(m map[netip.Addr]bool) (ret []message) {
 }
 
 //func (u *update) message(rib map[netip.Addr]bool) []byte {
-func (u *update) message(rib map[netip.Addr]bool) fragment {
+func (a *advert) message(rib map[netip.Addr]bool) update {
 
-	next_hop_address6 := u.NextHop6[:] // should be 16 or 32 bytes - a global adddress or global+link-local pair
-	next_hop_address4 := u.NextHop
+	next_hop_address6 := a.NextHop6[:] // should be 16 or 32 bytes - a global adddress or global+link-local pair
+	next_hop_address4 := a.NextHop
 
 	var withdrawn []byte
 	var advertise []byte
@@ -237,12 +237,12 @@ func (u *update) message(rib map[netip.Addr]bool) fragment {
 	// (Well-known, Mandatory, Transitive, Complete, Regular length). 2(AS_PATH), 0(bytes, if iBGP - may get updated)
 	as_path := []byte{WTCR, AS_PATH, 0}
 
-	asn := htons(u.ASNumber)
+	asn := htons(a.ASNumber)
 
-	if u.External {
+	if a.External {
 		// Each AS path segment is represented by a triple <path segment type, path segment length, path segment value>
 		as_sequence := []byte{AS_SEQUENCE, 1} // AS_SEQUENCE(2), 1 ASN
-		//as_sequence = append(as_sequence, htons(u.ASNumber)...)
+		//as_sequence = append(as_sequence, htons(a.ASNumber)...)
 		as_sequence = append(as_sequence, asn[:]...)
 		as_path = append(as_path, as_sequence...)
 		as_path[2] = byte(len(as_sequence)) // update length field
@@ -257,17 +257,22 @@ func (u *update) message(rib map[netip.Addr]bool) fragment {
 	path_attributes = append(path_attributes, next_hop...)
 
 	// rfc4271: A BGP speaker MUST NOT include this attribute in UPDATE messages it sends to external peers ...
-	if !u.External && u.LocalPref > 0 {
+	// LOCAL_PREF is a well-known attribute that SHALL be included in
+	// all UPDATE messages that a given BGP speaker sends to other
+	// internal peers. (NB: SHALL is synonymous for MUST - an absolute requirement)
+	if !a.External {
+		local_pref := htonl(100)
+		if a.LocalPref > 0 {
+			local_pref = htonl(a.LocalPref) // default value
+		}
 		// (Well-known, Transitive, Complete, Regular length), LOCAL_PREF(5), 4 bytes
-		local_pref := htonl(u.LocalPref)
-		//attr := append([]byte{WTCR, LOCAL_PREF, 4}, htonl(u.LocalPref)...)
 		attr := append([]byte{WTCR, LOCAL_PREF, 4}, local_pref[:]...)
 		path_attributes = append(path_attributes, attr...)
 	}
 
-	if len(u.Communities) > 0 {
+	if len(a.Communities) > 0 {
 		communities := []byte{}
-		for _, v := range u.Communities {
+		for _, v := range a.Communities {
 			c := htonl(uint32(v))
 			communities = append(communities, c[:]...)
 		}
@@ -283,9 +288,9 @@ func (u *update) message(rib map[netip.Addr]bool) fragment {
 		}
 	}
 
-	if u.MED > 0 {
+	if a.MED > 0 {
 		// (Optional, Non-transitive, Complete, Regular length), MULTI_EXIT_DISC(4), 4 bytes
-		med := htonl(u.MED)
+		med := htonl(a.MED)
 		attr := append([]byte{ONCR, MULTI_EXIT_DISC, 4}, med[:]...)
 		path_attributes = append(path_attributes, attr...)
 	}

@@ -31,33 +31,16 @@ type connection struct {
 	C     chan message
 	Error string
 
-	close       chan bool
+	closed      chan bool
 	writer_exit chan bool
 	reader_exit chan bool
 	pending     chan bool
 	conn        net.Conn
-
-	mutex sync.Mutex
-	out   []pdu
+	mutex       sync.Mutex
+	out         []pdu
 }
 
-func addHeader(t byte, d []byte) pdu {
-	l := 19 + len(d)
-	p := make([]byte, l)
-	for n := 0; n < 16; n++ {
-		p[n] = 0xff
-	}
-
-	p[16] = byte(l >> 8)
-	p[17] = byte(l & 0xff)
-	p[18] = t
-
-	copy(p[19:], d)
-
-	return p
-}
-
-func new_connection2(local IP4, peer string) (*connection, error) {
+func newConnection(local IP4, peer string) (*connection, error) {
 	var nul IP4
 
 	dialer := net.Dialer{
@@ -82,7 +65,7 @@ func new_connection2(local IP4, peer string) (*connection, error) {
 
 	c := &connection{
 		C:           make(chan message),
-		close:       make(chan bool),
+		closed:      make(chan bool),
 		writer_exit: make(chan bool),
 		reader_exit: make(chan bool),
 		pending:     make(chan bool, 1),
@@ -95,7 +78,7 @@ func new_connection2(local IP4, peer string) (*connection, error) {
 	return c, nil
 }
 
-func (c *connection) Local() ([]byte, bool) {
+func (c *connection) local() ([]byte, bool) {
 
 	if a, ok := c.conn.LocalAddr().(*net.TCPAddr); ok {
 		return a.IP, true
@@ -104,8 +87,8 @@ func (c *connection) Local() ([]byte, bool) {
 	return nil, false
 }
 
-func (c *connection) Close() {
-	close(c.close)
+func (c *connection) close() {
+	close(c.closed)
 }
 
 func (c *connection) shift() (pdu, bool) {
@@ -129,53 +112,30 @@ func (c *connection) shift() (pdu, bool) {
 	return m, true
 }
 
-func (c *connection) write(ms ...pdu) {
-	c.mutex.Lock()
-	defer c.mutex.Unlock()
+func (c *connection) queue(ms ...message) {
 
-	for _, m := range ms {
-		c.out = append(c.out, m)
+	addHeader := func(t byte, d []byte) pdu {
+		l := 19 + len(d)
+		p := make([]byte, l)
+		for n := 0; n < 16; n++ {
+			p[n] = 0xff
+		}
+		hl := htons(uint16(l))
+		p[16] = hl[0]
+		p[17] = hl[1]
+		p[18] = t
+
+		copy(p[19:], d)
+
+		return p
 	}
 
-	select {
-	case c.pending <- true:
-	default:
-	}
-}
-
-func (c *connection) queue(t uint8, ms ...pdu) {
-	c.mutex.Lock()
-	defer c.mutex.Unlock()
-
-	for _, m := range ms {
-		c.out = append(c.out, addHeader(t, m))
-	}
-
-	select {
-	case c.pending <- true:
-	default:
-	}
-}
-
-func (c *connection) queue2(ms ...message) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 
 	for _, m := range ms {
 		c.out = append(c.out, addHeader(m.Type(), m.Body()))
 	}
-
-	select {
-	case c.pending <- true:
-	default:
-	}
-}
-
-func (c *connection) write2(t uint8, m ...byte) {
-	c.mutex.Lock()
-	defer c.mutex.Unlock()
-
-	c.out = append(c.out, addHeader(t, m))
 
 	select {
 	case c.pending <- true:
@@ -212,7 +172,7 @@ func (c *connection) writer() {
 		// if the user asks to close the connection c.close is triggered
 
 		select {
-		case <-c.close:
+		case <-c.closed:
 			c.drain()
 			return
 		case <-c.reader_exit:
@@ -284,7 +244,7 @@ func (c *connection) reader() {
 
 		select {
 		case c.C <- m:
-		case <-c.close: // user wants to close the connection
+		case <-c.closed: // user wants to close the connection
 			c.Error = "Closed"
 			return
 		case <-c.writer_exit:

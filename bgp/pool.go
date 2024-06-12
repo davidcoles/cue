@@ -58,10 +58,6 @@ func (p *Pool) Configure(c map[string]Parameters) {
 	p.c <- c
 }
 
-func (p *Pool) _RIB(r []IP) {
-	p.r <- r
-}
-
 func (p *Pool) RIB(r []netip.Addr) {
 	var f []IP
 
@@ -135,7 +131,6 @@ func NewPool(routerid IP, peers map[string]Parameters, rib_ []IP, log BGPNotify)
 					if session, ok := sessions[peer]; ok {
 						session.Configure(params)
 					} else {
-						//pool.log().NXOTICE(F, KV{"event": "new-peer", "peer": peer, "params": params, "rib": rib})
 						pool.log().BGPPeer(peer, params, true)
 						sessions[peer] = NewSession(routerid, peer, params, rib, pool.log())
 					}
@@ -146,7 +141,6 @@ func NewPool(routerid IP, peers map[string]Parameters, rib_ []IP, log BGPNotify)
 					if _, ok := i[peer]; !ok {
 						session.Close()
 						delete(sessions, peer)
-						//pool.log().NXOTICE(F, KV{"event": "deleted-peer", "peer": peer})
 						pool.log().BGPPeer(peer, Parameters{}, false)
 					}
 				}

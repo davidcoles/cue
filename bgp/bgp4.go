@@ -26,6 +26,8 @@
 
 package bgp
 
+import "fmt"
+
 func htonl(h uint32) [4]byte {
 	return [4]byte{byte(h >> 24), byte(h >> 16), byte(h >> 8), byte(h)}
 }
@@ -63,29 +65,20 @@ const (
 	AS_SEQUENCE = 2
 
 	// NOTIFICATION ERROR CODES
-	MESSAGE_HEADER_ERROR = 1
-	OPEN_ERROR           = 2
-	HOLD_TIMER_EXPIRED   = 4
-	FSM_ERROR            = 5
-	CEASE                = 6
+	MESSAGE_HEADER_ERROR        = 1 // [RFC4271]
+	OPEN_MESSAGE_ERROR          = 2 // [RFC4271]
+	UPDATE_MESSAGE_ERROR        = 3 // [RFC4271]
+	HOLD_TIMER_EXPIRED          = 4 // [RFC4271]
+	FSM_ERROR                   = 5 // [RFC4271]
+	CEASE                       = 6 // [RFC4271]
+	ROUTE_REFRESH_MESSAGE_ERROR = 7 // [RFC7313]
 
-	// MESSAGE_HEADER_ERROR
-	BAD_MESSAGE_TYPE = 3
-
-	// OPEN_ERROR
-	UNSUPPORTED_VERSION_NUMBER = 1
-	BAD_BGP_ID                 = 3
-	UNNACEPTABLE_HOLD_TIME     = 6
-
-	// CEASE
-	MAXIMUM_PREFIXES_REACHED        = 1
-	ADMINISTRATIVE_SHUTDOWN         = 2
-	PEER_DECONFIGURED               = 3
-	ADMINISTRATIVE_RESET            = 4
-	CONNECTION_REJECTED             = 5
-	OTHER_CONFIGURATION_CHANGE      = 6
-	CONNECTION_COLLISION_RESOLUTION = 7
-	OUT_OF_RESOURCES                = 8
+	UNSUPPORTED_VERSION_NUMBER = 1 // OPEN_MESSAGE_ERROR
+	BAD_BGP_ID                 = 3 // OPEN_MESSAGE_ERROR
+	UNNACEPTABLE_HOLD_TIME     = 6 // OPEN_MESSAGE_ERROR
+	BAD_MESSAGE_TYPE           = 3 // MESSAGE_HEADER_ERROR
+	ADMINISTRATIVE_SHUTDOWN    = 2 // CEASE
+	OUT_OF_RESOURCES           = 8 // CEASE
 
 	// Optional/Well-known, Non-transitive/Transitive Complete/Partial Regular/Extended-length
 	// 128 64 32 16 8 4 2 1
@@ -101,11 +94,15 @@ const (
 	OTCE = 208 // (Optional, Transitive, Complete, Extended length)
 )
 
-func note(code, sub uint8) string {
+// https://www.iana.org/assignments/bgp-parameters/bgp-parameters.xhtml#bgp-parameters-3
+func (n *notification) note() string {
+
 	var s string = "<unrecognised>"
-	switch code {
-	case 0:
-		switch sub {
+	var sub string
+
+	switch n.code {
+	case 0: // Reserved - using this for "local" errors
+		switch n.sub {
 		case CONNECTION_FAILED:
 			s = "Connection failed"
 		case REMOTE_SHUTDOWN:
@@ -120,47 +117,118 @@ func note(code, sub uint8) string {
 
 	case MESSAGE_HEADER_ERROR:
 		s = "Message header error"
-		switch sub {
-		case BAD_MESSAGE_TYPE:
-			s += "; Bad message type"
+		switch n.sub {
+		case 1:
+			sub = "Connection Not Synchronized" // [RFC4271]
+		case 2:
+			sub = "Bad Message Length" // [RFC4271]
+		case 3:
+			sub = "Bad Message Type" // [RFC4271]
 		}
-	case OPEN_ERROR:
-		s = "OPEN_ERROR"
-		switch sub {
-		case UNSUPPORTED_VERSION_NUMBER:
-			s += "; Unsupported version number"
-		case BAD_BGP_ID:
-			s += "; Bad BGP identifier"
-		case UNNACEPTABLE_HOLD_TIME:
-			s += "; Unnaceptable hold time"
+
+	case OPEN_MESSAGE_ERROR:
+		s = "OPEN Message Error"
+		switch n.sub {
+		case 1:
+			sub = "Unsupported Version Number" // [RFC4271]
+		case 2:
+			sub = "Bad Peer AS" // [RFC4271]
+		case 3:
+			sub = "Bad BGP Identifier" // [RFC4271]
+		case 4:
+			sub = "Unsupported Optional Parameter" // [RFC4271]
+		case 5:
+			sub = "[Deprecated]" // [RFC4271]
+		case 6:
+			sub = "Unacceptable Hold Time" // [RFC4271]
+		case 7:
+			sub = "Unsupported Capability" // [RFC5492]
+		case 8:
+			sub = "Deprecated" // [RFC9234]
+		case 9:
+			sub = "Deprecated" // [RFC9234]
+		case 10:
+			sub = "Deprecated" // [RFC9234]
+		case 11:
+			sub = "Role Mismatch" // [RFC9234]
+		}
+
+	case UPDATE_MESSAGE_ERROR:
+		s = "UPDATE Message Error"
+		switch n.sub {
+		case 1:
+			sub = "Malformed Attribute List" // [RFC4271]
+		case 2:
+			sub = "Unrecognized Well-known Attribute" // [RFC4271]
+		case 3:
+			sub = "Missing Well-known Attribute" // [RFC4271]
+		case 4:
+			sub = "Attribute Flags Error" // [RFC4271]
+		case 5:
+			sub = "Attribute Length Error" // [RFC4271]
+		case 6:
+			sub = "Invalid ORIGIN Attribute" // [RFC4271]
+		case 7:
+			sub = "[Deprecated]" // [RFC4271]
+		case 8:
+			sub = "Invalid NEXT_HOP Attribute" // [RFC4271]
+		case 9:
+			sub = "Optional Attribute Error" // [RFC4271]
+		case 10:
+			sub = "Invalid Network Field" // [RFC4271]
+		case 11:
+			sub = "Malformed AS_PATH" // [RFC4271]
 		}
 
 	case FSM_ERROR:
-		s = "Finite state machine error"
+		s = "BGP Finite State Machine Error"
+		switch n.sub {
+		case 0:
+			sub = "Unspecified Error" // [RFC6608]
+		case 1:
+			sub = "Receive Unexpected Message in OpenSent State" // [RFC6608]
+		case 2:
+			sub = "Receive Unexpected Message in OpenConfirm State" // [RFC6608]
+		case 3:
+			sub = "Receive Unexpected Message in Established State" // [RFC6608]
+		}
 
 	case HOLD_TIMER_EXPIRED:
 		s = "Hold timer expired"
 
 	case CEASE:
 		s = "Cease"
-		switch sub {
-		case MAXIMUM_PREFIXES_REACHED:
-			s += "; Maximum prefixes reached"
-		case ADMINISTRATIVE_SHUTDOWN:
-			s += "; Administrative shutdown"
-		case PEER_DECONFIGURED:
-			s += "; Peer deconfigured"
-		case ADMINISTRATIVE_RESET:
-			s += "; Administrative reset"
-		case CONNECTION_REJECTED:
-			s += "; Connection rejected"
-		case OTHER_CONFIGURATION_CHANGE:
-			s += "; Other configuration change"
-		case CONNECTION_COLLISION_RESOLUTION:
-			s += ": Connection collision resolution"
-		case OUT_OF_RESOURCES:
-			s += "; Out of resources"
+		switch n.sub {
+		case 1:
+			sub = "Maximum Number of Prefixes Reached" // [RFC4486]
+		case 2:
+			sub = "Administrative Shutdown" // [RFC4486][RFC9003]
+		case 3:
+			sub = "Peer De-configured" // [RFC4486]
+		case 4:
+			sub = "Administrative Reset" // [RFC4486][RFC9003]
+		case 5:
+			sub = "Connection Rejected" // [RFC4486]
+		case 6:
+			sub = "Other Configuration Change" // [RFC4486]
+		case 7:
+			sub = "Connection Collision Resolution" //	[RFC4486]
+		case 8:
+			sub = "Out of Resources" // [RFC4486]
+		case 9:
+			sub = "Hard Reset" // [RFC8538]
+		case 10:
+			sub = "BFD Down" // [RFC9384]
 		}
 	}
+
+	if len(sub) > 0 {
+		s += "; " + sub
+	}
+
+	if len(n.data) > 0 {
+		s += " " + fmt.Sprint(n.data)
+	}
+
 	return s
 }

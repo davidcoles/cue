@@ -61,12 +61,12 @@ const (
 )
 
 type Session struct {
-	c      chan Update
+	c      chan _update
 	p      Parameters
 	rib    []netip.Addr
 	status Status
 	mutex  sync.Mutex
-	update Update
+	update _update
 	logs   BGPNotify
 }
 
@@ -85,7 +85,13 @@ func toaddr(in []IP) (out []netip.Addr) {
 }
 
 func NewSession(id IP, peer string, p Parameters, r []IP, l BGPNotify) *Session {
-	s := &Session{p: p, rib: toaddr(r), logs: l, status: Status{State: IDLE}, update: newupdate(p, r)}
+
+	var rib []netip.Addr
+	for _, i := range r {
+		rib = append(rib, netip.AddrFrom4(i))
+	}
+
+	s := &Session{p: p, rib: toaddr(r), logs: l, status: Status{State: IDLE}, update: newupdate(p, rib)}
 	s.c = s.session(id, peer)
 	return s
 }
@@ -95,7 +101,7 @@ func (s *Session) Start(id IP, peer string, p Parameters, r []netip.Addr, l BGPN
 	s.rib = r
 	s.logs = l
 	s.status = Status{State: IDLE}
-	s.update = newupdate2(p, r)
+	s.update = newupdate(p, r)
 	s.c = s.session(id, peer)
 }
 
@@ -108,17 +114,17 @@ func (s *Session) Status() Status {
 
 func (s *Session) RIB(r []IP) {
 	s.rib = toaddr(r)
-	s.c <- newupdate2(s.p, s.rib)
+	s.c <- newupdate(s.p, s.rib)
 }
 
 func (s *Session) LocRIB(r []netip.Addr) {
 	s.rib = r
-	s.c <- newupdate2(s.p, s.rib)
+	s.c <- newupdate(s.p, s.rib)
 }
 
 func (s *Session) Configure(p Parameters) {
 	s.p = p
-	s.c <- newupdate2(s.p, s.rib)
+	s.c <- newupdate(s.p, s.rib)
 }
 
 func (s *Session) Close() {
@@ -207,10 +213,10 @@ func (s *Session) update_stats(d time.Duration, r []netip.Addr, n map[netip.Addr
 	s.status.Prefixes = len(r)
 }
 
-func (s *Session) session(id IP, peer string) chan Update {
+func (s *Session) session(id IP, peer string) chan _update {
 	const F = "session"
 
-	updates := make(chan Update, 10)
+	updates := make(chan _update, 10)
 
 	go func() {
 
@@ -229,18 +235,14 @@ func (s *Session) session(id IP, peer string) chan Update {
 				var e string
 
 				if b {
-					e = fmt.Sprintf("Received notification[%d:%d]: %s", n.code, n.sub, note(n.code, n.sub))
-					if len(n.data) > 0 {
-						e += " (" + string(n.data) + ")"
-					}
-
+					e = fmt.Sprintf("Received notification[%d:%d]: %s", n.code, n.sub, n.note())
 					s.log().BGPSession(peer, false, e)
 
 				} else {
 					if n.code == 0 {
-						e = note(n.code, n.sub)
+						e = n.note()
 					} else {
-						e = fmt.Sprintf("Sent notification[%d:%d]: %s", n.code, n.sub, note(n.code, n.sub))
+						e = fmt.Sprintf("Sent notification[%d:%d]: %s", n.code, n.sub, n.note())
 					}
 					if len(n.data) > 0 {
 						e += " (" + string(n.data) + ")"
@@ -272,11 +274,10 @@ func (s *Session) session(id IP, peer string) chan Update {
 func (s *Session) idle() {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
-	//s.status.State = IDLE
 	s.state2(IDLE)
 }
 
-func (s *Session) try(routerid IP, peer string, updates chan Update) (bool, notification) {
+func (s *Session) try(routerid IP, peer string, updates chan _update) (bool, notification) {
 
 	nexthop4 := s.update.Parameters.NextHop4
 	nexthop6 := s.update.Parameters.NextHop6
@@ -295,17 +296,17 @@ func (s *Session) try(routerid IP, peer string, updates chan Update) (bool, noti
 
 	s.active(holdtime, asnumber, localip)
 
-	conn, err := new_connection2(localip, peer)
+	conn, err := newConnection(localip, peer)
 
 	if err != nil {
 		return false, local(CONNECTION_FAILED, err.Error())
 	}
 
-	defer conn.Close()
+	defer conn.close()
 
 	var local6 [16]byte
 
-	loc, ok := conn.Local()
+	loc, ok := conn.local()
 
 	if !ok {
 		return false, local(INVALID_LOCALIP, "No local address")
@@ -333,9 +334,8 @@ func (s *Session) try(routerid IP, peer string, updates chan Update) (bool, noti
 
 	s.connect()
 
-	o := open{asNumber: asnumber, holdTime: holdtime, routerID: routerid, multiprotocol: true}
-	//conn.queue(M_OPEN, o.message())
-	conn.queue2(&o)
+	o := open{asNumber: asnumber, holdTime: holdtime, routerID: routerid, multiprotocol: multiprotocol}
+	conn.queue(&o)
 
 	s.state(OPEN_SENT)
 
@@ -370,11 +370,11 @@ func (s *Session) try(routerid IP, peer string, updates chan Update) (bool, noti
 
 	notify := func(code, sub byte) notification {
 		n := notification{code: code, sub: sub}
-		conn.queue2(&n)
+		conn.queue(&n)
 		return n
 	}
 
-	updateTemplate := update{
+	updateTemplate := advert{
 		IPv6:          ipv6,
 		ASNumber:      asnumber,
 		External:      external,
@@ -415,15 +415,15 @@ func (s *Session) try(routerid IP, peer string, updates chan Update) (bool, noti
 
 				//if m.open.version != 4 {
 				if o.version != 4 {
-					return false, notify(OPEN_ERROR, UNSUPPORTED_VERSION_NUMBER)
+					return false, notify(OPEN_MESSAGE_ERROR, UNSUPPORTED_VERSION_NUMBER)
 				}
 
 				if o.holdTime < 3 {
-					return false, notify(OPEN_ERROR, UNNACEPTABLE_HOLD_TIME)
+					return false, notify(OPEN_MESSAGE_ERROR, UNNACEPTABLE_HOLD_TIME)
 				}
 
 				if o.routerID == routerid {
-					return false, notify(OPEN_ERROR, BAD_BGP_ID)
+					return false, notify(OPEN_MESSAGE_ERROR, BAD_BGP_ID)
 				}
 
 				if o.holdTime < holdtime {
@@ -439,7 +439,7 @@ func (s *Session) try(routerid IP, peer string, updates chan Update) (bool, noti
 
 				s.established(holdtime, asnumber, o.asNumber)
 
-				conn.queue2(&keepalive{})
+				conn.queue(&keepalive{})
 
 				t := time.Now()
 				p := s.update.Parameters
@@ -455,7 +455,7 @@ func (s *Session) try(routerid IP, peer string, updates chan Update) (bool, noti
 					if updates := u.updates(nlri); len(updates) < 1 {
 						return false, notify(CEASE, OUT_OF_RESOURCES)
 					} else {
-						conn.queue2(updates...)
+						conn.queue(updates...)
 					}
 				}
 
@@ -492,7 +492,7 @@ func (s *Session) try(routerid IP, peer string, updates chan Update) (bool, noti
 					if updates := u.updates(nlri); len(updates) < 1 {
 						return false, notify(CEASE, OUT_OF_RESOURCES)
 					} else {
-						conn.queue2(updates...)
+						conn.queue(updates...)
 					}
 				}
 
@@ -503,7 +503,7 @@ func (s *Session) try(routerid IP, peer string, updates chan Update) (bool, noti
 
 		case <-keepalive_timer.C:
 			if s.status.State == ESTABLISHED {
-				conn.queue2(&keepalive{})
+				conn.queue(&keepalive{})
 			}
 
 		case <-hold_timer.C:

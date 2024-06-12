@@ -23,40 +23,41 @@ import (
 	"net/netip"
 )
 
-func newupdate(p Parameters, r []IP) Update {
-	var rib []netip.Addr
-	for _, i := range r {
-		rib = append(rib, netip.AddrFrom4(i))
-	}
-	return Update{RIB2: rib, Parameters: p}
+//type Update = _update
+
+type _update struct {
+	RIB        []netip.Addr
+	Parameters Parameters
 }
 
-func newupdate2(p Parameters, r []netip.Addr) Update {
+//func newupdate(p Parameters, r []IP) _update {
+//	var rib []netip.Addr
+//	for _, i := range r {
+//		rib = append(rib, netip.AddrFrom4(i))
+//	}
+//	return _update{RIB: rib, Parameters: p}
+//}
+
+func newupdate(p Parameters, r []netip.Addr) _update {
 	var rib []netip.Addr
 	for _, i := range r {
 		rib = append(rib, i)
 	}
-	return Update{RIB2: rib, Parameters: p}
+	return _update{RIB: rib, Parameters: p}
 }
 
-type Update struct {
-	RIB        []IP
-	RIB2       []netip.Addr
-	Parameters Parameters
-}
+//func (r *_update) adjRIBOutString(ipv6 bool) (out []string) {
+//	for _, p := range r.Filter(ipv6) {
+//		out = append(out, p.String())
+//	}
+//	return
+//}
 
-func (r *Update) adjRIBOutString(ipv6 bool) (out []string) {
-	for _, p := range r.Filter(ipv6) {
-		out = append(out, p.String())
-	}
-	return
-}
-
-func (r *Update) adjRIBOut(ipv6 bool) (out []netip.Addr) {
+func (r *_update) adjRIBOut(ipv6 bool) (out []netip.Addr) {
 	return r.Filter(ipv6)
 }
 
-func (u *Update) Initial(ipv6 bool) map[netip.Addr]bool {
+func (u *_update) Initial(ipv6 bool) map[netip.Addr]bool {
 	out := map[netip.Addr]bool{}
 	for _, i := range u.Filter(ipv6) {
 		out[i] = true
@@ -64,12 +65,12 @@ func (u *Update) Initial(ipv6 bool) map[netip.Addr]bool {
 	return out
 }
 
-func (r *Update) adjRIBOutP(ipv6 bool) ([]netip.Addr, Parameters) {
-	return r.Filter(ipv6), r.Parameters
-}
+//func (r *_update) adjRIBOutP(ipv6 bool) ([]netip.Addr, Parameters) {
+//	return r.Filter(ipv6), r.Parameters
+//}
 
-func (u *Update) Filter(ipv6 bool) []netip.Addr {
-	return u.Parameters.Filter(ipv6, u.RIB2)
+func (u *_update) Filter(ipv6 bool) []netip.Addr {
+	return u.Parameters.Filter(ipv6, u.RIB)
 }
 
 func (p *Parameters) Filter(ipv6 bool, dest []netip.Addr) (pass []netip.Addr) {
@@ -134,38 +135,16 @@ func Filter(dest []IP, filter []IP) []IP {
 	return o
 }
 
-func advertise(r []IP) map[IP]bool {
-	n := map[IP]bool{}
-	for _, ip := range r {
-		n[ip] = true
-	}
-	return n
-}
-
-func to_string(in []IP) (out []string) {
-	for _, p := range in {
-		out = append(out, ip_string(p))
-	}
-	return
-}
-
-func (r Update) Copy() Update {
-	var rib []IP
-
-	for _, x := range r.RIB {
-		rib = append(rib, x)
-	}
-
-	return Update{RIB: rib, Parameters: r.Parameters}
-}
-
-func (u *Update) Source() net.IP {
+func (u *_update) Source() net.IP {
 	return net.ParseIP(ip_string(u.Parameters.SourceIP))
 }
 
-func NLRI(curr, prev []netip.Addr, force bool) ([]netip.Addr, map[netip.Addr]bool) {
-	out := map[netip.Addr]bool{}
+func (u *_update) nlri(old []netip.Addr, ipv6, force bool) ([]netip.Addr, map[netip.Addr]bool) {
+	return NLRI(u.adjRIBOut(ipv6), old, force)
+}
 
+func NLRI(curr, prev []netip.Addr, force bool) (list []netip.Addr, nlri map[netip.Addr]bool) {
+	nlri = map[netip.Addr]bool{}
 	new := map[netip.Addr]bool{}
 	old := map[netip.Addr]bool{}
 
@@ -180,21 +159,22 @@ func NLRI(curr, prev []netip.Addr, force bool) ([]netip.Addr, map[netip.Addr]boo
 	// if IP was in the previous list but not in the new list then withdraw
 	for i, _ := range old {
 		if _, ok := new[i]; !ok {
-			out[i] = false
+			nlri[i] = false
 		}
 	}
 
-	// if force readvertise or IP is in the current list but not in the old one then advertise
+	// if force readvertise or IP is in the current list but not in the old one then advertise - add to new list anyway
 	for i, _ := range new {
+		list = append(list, i)
 		if _, ok := old[i]; !ok || force {
-			out[i] = true
+			nlri[i] = true
 		}
 	}
 
-	return curr, out
+	return
 }
 
-func (c *Update) updates(p Update, ipv6 bool) (uint64, uint64, map[netip.Addr]bool) {
+func (c *_update) updates(p _update, ipv6 bool) (uint64, uint64, map[netip.Addr]bool) {
 	nrli := map[netip.Addr]bool{}
 
 	var advertise uint64
