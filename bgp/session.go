@@ -446,7 +446,8 @@ func (s *Session) try(routerid IP, peer string, updates chan _update) (bool, not
 				u := updateTemplate.withParameters(p)
 
 				// initial NLRI will simply advertise any initial addresses in the RIB
-				adjRIBOut, nlri = NLRI(s.update.adjRIBOut(ipv6), nil, false)
+				//adjRIBOut, nlri = NLRI(s.update.adjRIBOut(ipv6), nil, false)
+				adjRIBOut, nlri = s.update.nlri(nil, ipv6, false)
 				parameters = p
 
 				//fmt.Println("Init:", adjRIBOut, nlri)
@@ -483,7 +484,8 @@ func (s *Session) try(routerid IP, peer string, updates chan _update) (bool, not
 				u := updateTemplate.withParameters(p)
 
 				// calculate NLRI to transmit - force re-advertisement if parameters have changed (MED, local-pref, communities)
-				adjRIBOut, nlri = NLRI(r.adjRIBOut(ipv6), adjRIBOut, parameters.Diff(p))
+				//adjRIBOut, nlri = NLRI(r.adjRIBOut(ipv6), adjRIBOut, parameters.Diff(p))
+				adjRIBOut, nlri = r.nlri(adjRIBOut, ipv6, parameters.Diff(p))
 				parameters = p
 
 				//fmt.Println("Update:", adjRIBOut, nlri)

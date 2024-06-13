@@ -19,61 +19,56 @@
 package bgp
 
 import (
-	"net"
+	//"net"
 	"net/netip"
 )
-
-//type Update = _update
 
 type _update struct {
 	RIB        []netip.Addr
 	Parameters Parameters
 }
 
-//func newupdate(p Parameters, r []IP) _update {
-//	var rib []netip.Addr
-//	for _, i := range r {
-//		rib = append(rib, netip.AddrFrom4(i))
-//	}
-//	return _update{RIB: rib, Parameters: p}
-//}
+type _rib []netip.Addr
+
+func (r _rib) dup() (ret []netip.Addr) {
+	for _, i := range r {
+		ret = append(ret, i)
+	}
+	return
+}
 
 func newupdate(p Parameters, r []netip.Addr) _update {
-	var rib []netip.Addr
-	for _, i := range r {
-		rib = append(rib, i)
-	}
-	return _update{RIB: rib, Parameters: p}
+	//var rib []netip.Addr // create a seperate copy of the slice
+	//for _, i := range r {
+	//	rib = append(rib, i)
+	//}
+	return _update{RIB: _rib(r).dup(), Parameters: p}
 }
 
-//func (r *_update) adjRIBOutString(ipv6 bool) (out []string) {
-//	for _, p := range r.Filter(ipv6) {
-//		out = append(out, p.String())
+func (u *_update) adjRIBOut(ipv6 bool) (out []netip.Addr) {
+	//return u.filter(ipv6)
+	return u.Parameters.filter(ipv6, u.RIB)
+}
+
+//func (u *_update) initial(ipv6 bool) map[netip.Addr]bool {
+//	out := map[netip.Addr]bool{}
+//	for _, i := range u.Filter(ipv6) {
+//		out[i] = true
 //	}
-//	return
+//	return out
 //}
 
-func (r *_update) adjRIBOut(ipv6 bool) (out []netip.Addr) {
-	return r.Filter(ipv6)
-}
-
-func (u *_update) Initial(ipv6 bool) map[netip.Addr]bool {
-	out := map[netip.Addr]bool{}
-	for _, i := range u.Filter(ipv6) {
-		out[i] = true
-	}
-	return out
-}
-
-//func (r *_update) adjRIBOutP(ipv6 bool) ([]netip.Addr, Parameters) {
-//	return r.Filter(ipv6), r.Parameters
+//func (u *_update) filter(ipv6 bool) []netip.Addr {
+//	return u.Parameters.filter(ipv6, u.RIB)
 //}
 
-func (u *_update) Filter(ipv6 bool) []netip.Addr {
-	return u.Parameters.Filter(ipv6, u.RIB)
-}
+func (p *Parameters) filter(ipv6 bool, dest []netip.Addr) (pass []netip.Addr) {
 
-func (p *Parameters) Filter(ipv6 bool, dest []netip.Addr) (pass []netip.Addr) {
+	// ipv6 should be set to true iff the bearer TCP connection is
+	// establshed over IPv6
+
+	// If the Multiprotocol flag is not set then address of a
+	// different type to that of the connection will be filtered out.
 
 filter:
 	for _, i := range dest {
@@ -112,39 +107,20 @@ filter:
 	return pass
 }
 
-func Filter(dest []IP, filter []IP) []IP {
+//func (u *_update) xSource() net.IP {
+//	return net.ParseIP(ip_string(u.Parameters.SourceIP))
+//}
 
-	reject := map[IP]bool{}
+//func (u *_update) nlri(old []netip.Addr, ipv6, force bool) ([]netip.Addr, map[netip.Addr]bool) {
+//	return _nlri(u.adjRIBOut(ipv6), old, force)
+//}
 
-	if len(filter) == 0 {
-		return dest
-	}
+//func _nlri(curr, prev []netip.Addr, force bool) (list []netip.Addr, nlri map[netip.Addr]bool) {
+func (u *_update) nlri(prev []netip.Addr, ipv6, force bool) ([]netip.Addr, map[netip.Addr]bool) {
+	curr := u.adjRIBOut(ipv6)
+	var list []netip.Addr
 
-	for _, i := range filter {
-		reject[i] = true
-	}
-
-	var o []IP
-
-	for _, i := range dest {
-		if _, rejected := reject[i]; !rejected {
-			o = append(o, i)
-		}
-	}
-
-	return o
-}
-
-func (u *_update) Source() net.IP {
-	return net.ParseIP(ip_string(u.Parameters.SourceIP))
-}
-
-func (u *_update) nlri(old []netip.Addr, ipv6, force bool) ([]netip.Addr, map[netip.Addr]bool) {
-	return NLRI(u.adjRIBOut(ipv6), old, force)
-}
-
-func NLRI(curr, prev []netip.Addr, force bool) (list []netip.Addr, nlri map[netip.Addr]bool) {
-	nlri = map[netip.Addr]bool{}
+	nlri := map[netip.Addr]bool{}
 	new := map[netip.Addr]bool{}
 	old := map[netip.Addr]bool{}
 
@@ -171,7 +147,7 @@ func NLRI(curr, prev []netip.Addr, force bool) (list []netip.Addr, nlri map[neti
 		}
 	}
 
-	return
+	return list, nlri
 }
 
 func (c *_update) updates(p _update, ipv6 bool) (uint64, uint64, map[netip.Addr]bool) {
@@ -211,3 +187,28 @@ func (c *_update) updates(p _update, ipv6 bool) (uint64, uint64, map[netip.Addr]
 
 	return advertise, withdraw, nrli
 }
+
+/*
+func Filter(dest []IP, filter []IP) []IP {
+
+	reject := map[IP]bool{}
+
+	if len(filter) == 0 {
+		return dest
+	}
+
+	for _, i := range filter {
+		reject[i] = true
+	}
+
+	var o []IP
+
+	for _, i := range dest {
+		if _, rejected := reject[i]; !rejected {
+			o = append(o, i)
+		}
+	}
+
+	return o
+}
+*/
