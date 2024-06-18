@@ -56,14 +56,14 @@ func main() {
 	rib = routingInformationBase() // populate the RIB
 	s.LocRIB(rib)                  // and send the updates
 
-	time.Sleep(20 * time.Second)
+	time.Sleep(60 * time.Second)
 
 	// update parameters - will re-advertise the prefixes
 	parameters.MED = 123
 	parameters.LocalPref = 123
 	s.Configure(parameters)
 
-	time.Sleep(10 * time.Second)
+	time.Sleep(60 * time.Second)
 
 	// dump a JSON representation of the session status
 	if js, err := json.MarshalIndent(s.Status(), " ", " "); err != nil {
