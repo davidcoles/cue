@@ -29,13 +29,15 @@ Example invocations are listed in comments in the code.
 ## Loopback BGP
 
 I have found that it is possible to connect to a local BIRD instance
-and advertise addresses fo re-distribution into the network from
-there. Here I connect to BIRD on the loopback interface with 127.0.0.1
-as my router ID and the loopback IP addresses for both IPv4 and IPv6:
+and advertise addresses for re-distribution into the network from
+there. Here I connect to BIRD using multiprotocol extensions on the
+loopback interface with 127.0.0.1 as my router ID and the loopback IP
+addresses for both IPv4 and IPv6 next hop (BIRD will update these when
+re-advertising):
 
 `go run bgp.go -6 ::1 -m 65001 127.0.0.1 127.0.0.1`
 
-Using th BIRD configuration below I can then connect to a router and
+Using the BIRD configuration below I can then connect to a router and
 gain the benefits of using BFD. Global IPv6 addresses on the local
 server and the router are needed for the IPv6 address to be
 re-advertised successfully.
