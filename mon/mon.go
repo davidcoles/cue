@@ -19,6 +19,7 @@
 package mon
 
 import (
+	"context"
 	"crypto/tls"
 	"errors"
 	"fmt"
@@ -26,6 +27,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"strings"
 	"sync"
 	"time"
 )
@@ -110,6 +112,7 @@ type Mon struct {
 	C        chan bool
 	Prober   Prober
 	Notifier Notifier
+	SNI      bool
 
 	services map[Instance]*state
 	syn      *SYN
@@ -476,6 +479,11 @@ func (m *Mon) synProbe(addr netip.Addr, port uint16) (bool, string) {
 }
 
 func (m *Mon) httpProbe(addr netip.Addr, port uint16, https bool, head bool, host, path string, expect ...int) (bool, string) {
+
+	if m.SNI {
+		return m.sniHttpProbe(addr, port, https, head, host, path, expect...)
+	}
+
 	defer client.CloseIdleConnections()
 
 	scheme := "http"
@@ -523,13 +531,19 @@ func (m *Mon) httpProbe(addr netip.Addr, port uint16, https bool, head bool, hos
 	}
 
 	for _, e := range expect {
-		if resp.StatusCode == e {
+		if e == 0 || resp.StatusCode == e {
 			return true, resp.Status
 		}
 	}
 
 	return false, resp.Status
 }
+
+// Actually, turns out that the below is needed for Microsoft ADFS probes:
+// https://pdfs.loadbalancer.org/Microsoft_ADFS_Deployment_Guide.pdf
+// Only on HTTP: /adfs/probe will return 200
+// Only on HTTPS; /adfs/ls will return 200
+// new code below the comments
 
 // unlikely, but may need to override for SNI in case remote server selects handler based on TLS values?
 // something like: https://github.com/golang/go/issues/22704
@@ -552,3 +566,108 @@ client := http.Client{
 */
 
 // create a new client each time, with right IP?
+
+func (m *Mon) sniHttpProbe(addr netip.Addr, port uint16, https bool, head bool, host, path string, expect ...int) (bool, string) {
+
+	// I know that the advice is to reuse clients rather than creating
+	// new ones, but the intention here is to check the whole
+	// connection process so cached connections are undesirable and it
+	// makes doing SNI to explicit IP addresses hard. The client
+	// should be garbage collected, as I understand it.
+
+	sni := sniClient(addr)
+
+	defer sni.CloseIdleConnections()
+
+	scheme := "http"
+	method := "GET"
+
+	if https {
+		scheme = "https"
+	}
+
+	if head {
+		method = "HEAD"
+	}
+
+	if len(path) > 0 && path[0] == '/' {
+		path = path[1:]
+	}
+
+	if port == 0 {
+		return false, "Port is 0"
+	}
+
+	if host == "" {
+		host = addr.String()
+
+		if addr.Is6() {
+			host = "[" + host + "]" // surround IPv6 address with brackets because of colons
+		}
+	}
+
+	url := fmt.Sprintf("%s://%s:%d/%s", scheme, host, port, path)
+	req, err := http.NewRequest(method, url, nil)
+
+	if err != nil {
+		return false, err.Error()
+	}
+
+	resp, err := sni.Do(req)
+
+	if err != nil {
+		return false, err.Error()
+	}
+
+	defer resp.Body.Close()
+
+	ioutil.ReadAll(resp.Body)
+
+	if len(expect) == 0 {
+		expect = []int{200}
+	}
+
+	for _, e := range expect {
+		if e == 0 || resp.StatusCode == e {
+			return true, resp.Status
+		}
+	}
+
+	return false, resp.Status
+}
+
+func sniHost(addr string, ipaddr netip.Addr) string {
+	i := strings.LastIndex(addr, ":")
+	if i < 0 {
+		return addr
+	}
+
+	s := ipaddr.String()
+
+	if ipaddr.Is6() {
+		s = "[" + s + "]"
+	}
+
+	return s + addr[i:]
+}
+
+func sniClient(host netip.Addr) *http.Client {
+
+	return &http.Client{
+		Timeout: time.Second * 2,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+		Transport: &http.Transport{
+			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				dialer := &net.Dialer{
+					Timeout: 2 * time.Second,
+				}
+				return dialer.DialContext(ctx, network, sniHost(addr, host))
+			},
+			//Dial:                dialer.Dial,  // "Deprecated: Use DialContext instead"
+			TLSHandshakeTimeout: 2 * time.Second,
+			TLSClientConfig:     &tls.Config{InsecureSkipVerify: true},
+		},
+	}
+}
