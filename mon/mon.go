@@ -571,9 +571,9 @@ func (m *Mon) sniHttpProbe(addr netip.Addr, port uint16, https bool, head bool, 
 
 	// I know that the advice is to reuse clients rather than creating
 	// new ones, but the intention here is to check the whole
-	// connection process so cached connections are undesirable and it
-	// makes doing SNI to explicit IP addresses hard. The client
-	// should be garbage collected, as I understand it.
+	// connection process, so cached connections are undesirable and
+	// it makes doing SNI to explicit IP addresses hard. The client
+	// should be garbage collected anyway, as I understand it.
 
 	sni := sniClient(addr)
 

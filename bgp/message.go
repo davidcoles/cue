@@ -130,17 +130,19 @@ type advert struct {
 	LocalPref     uint32
 	MED           uint32
 	Communities   []Community
-	External      bool
 	RIB           map[netip.Addr]bool
 	Multiprotocol bool
 	IPv6          bool
+
+	external bool
 }
 
-func (a *advert) withParameters(p Parameters) (r advert) {
+func (a *advert) withParameters(p Parameters, remoteASNumber uint16) (r advert) {
 	r = *a
 	r.Communities = p.Communities
 	r.LocalPref = p.LocalPref
 	r.MED = p.MED
+	r.external = a.ASNumber != remoteASNumber
 	return
 }
 
@@ -234,19 +236,36 @@ func (a *advert) message(rib map[netip.Addr]bool) update {
 	// (Well-known, Mandatory, Transitive, Complete, Regular length), 1(ORIGIN), 1(byte), 0(IGP)
 	origin := []byte{WTCR, ORIGIN, 1, IGP}
 
+	as_path := asPath(a.ASNumber, a.external) // Well-known, Mandatory
+
 	// (Well-known, Mandatory, Transitive, Complete, Regular length). 2(AS_PATH), 0(bytes, if iBGP - may get updated)
-	as_path := []byte{WTCR, AS_PATH, 0}
+	/*
+		as_path := []byte{WTCR, AS_PATH, 0}
 
-	asn := htons(a.ASNumber)
+		// RFC 4271, 5.1.2:
 
-	if a.External {
-		// Each AS path segment is represented by a triple <path segment type, path segment length, path segment value>
-		as_sequence := []byte{AS_SEQUENCE, 1} // AS_SEQUENCE(2), 1 ASN
-		//as_sequence = append(as_sequence, htons(a.ASNumber)...)
-		as_sequence = append(as_sequence, asn[:]...)
-		as_path = append(as_path, as_sequence...)
-		as_path[2] = byte(len(as_sequence)) // update length field
-	}
+		// When a BGP speaker originates a route then:
+		//
+		// a) the originating speaker includes its own AS number in a path
+		//    segment, of type AS_SEQUENCE, in the AS_PATH attribute of all
+		//    UPDATE messages sent to an external peer.  In this case, the AS
+		//    number of the originating speaker's autonomous system will be
+		//    the only entry the path segment, and this path segment will be
+		//    the only segment in the AS_PATH attribute.
+		//
+		// b) the originating speaker includes an empty AS_PATH attribute in
+		//    all UPDATE messages sent to internal peers.  (An empty AS_PATH
+		//    attribute is one whose length field contains the value zero).
+
+		if a.external {
+			asn := htons(a.ASNumber)
+			// Each AS path segment is represented by a triple <path segment type, path segment length, path segment value>
+			as_sequence := []byte{AS_SEQUENCE, 1} // AS_SEQUENCE(2), 1 ASN
+			as_sequence = append(as_sequence, asn[:]...)
+			as_path = append(as_path, as_sequence...)
+			as_path[2] = byte(len(as_sequence)) // update length field
+		}
+	*/
 
 	// (Well-known, Mandatory, Transitive, Complete, Regular length), NEXT_HOP(3), 4(bytes)
 	next_hop := append([]byte{WTCR, NEXT_HOP, 4}, next_hop_address4[:]...)
@@ -260,7 +279,7 @@ func (a *advert) message(rib map[netip.Addr]bool) update {
 	// LOCAL_PREF is a well-known attribute that SHALL be included in
 	// all UPDATE messages that a given BGP speaker sends to other
 	// internal peers. (NB: SHALL is synonymous for MUST - an absolute requirement)
-	if !a.External {
+	if !a.external {
 		local_pref := htonl(100)
 		if a.LocalPref > 0 {
 			local_pref = htonl(a.LocalPref) // default value
@@ -358,4 +377,34 @@ func (a *advert) message(rib map[netip.Addr]bool) update {
 	}
 
 	return update
+}
+
+func asPath(asn uint16, external bool) (as_path []byte) {
+
+	as_path = []byte{WTCR, AS_PATH, 0} // (Well-known, Mandatory, Transitive, Complete, Regular length)
+
+	// RFC 4271, Section 5.1.2:
+
+	// When a BGP speaker originates a route then:
+	//
+	// a) the originating speaker includes its own AS number in a path
+	//    segment, of type AS_SEQUENCE, in the AS_PATH attribute of all
+	//    UPDATE messages sent to an external peer.  In this case, the AS
+	//    number of the originating speaker's autonomous system will be
+	//    the only entry the path segment, and this path segment will be
+	//    the only segment in the AS_PATH attribute.
+	//
+	// b) the originating speaker includes an empty AS_PATH attribute in
+	//    all UPDATE messages sent to internal peers.  (An empty AS_PATH
+	//    attribute is one whose length field contains the value zero).
+
+	if external { // as per the above we only add a single AS_SEQUENCE path segment if eBGP - leave the as_path empty otherwise
+		as_number := htons(asn)
+		as_sequence := []byte{AS_SEQUENCE, 1} // Each AS path segment is represented by a triple <segment type, segment length, value>
+		as_sequence = append(as_sequence, as_number[:]...)
+		as_path = append(as_path, as_sequence...)
+		as_path[2] = byte(len(as_sequence)) // update length field
+	}
+
+	return
 }

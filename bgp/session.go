@@ -288,7 +288,8 @@ func (s *Session) try(routerid IP, peer string, updates chan _update) (bool, not
 	sourceip := s.update.Parameters.SourceIP
 	localip := sourceip // may be 0.0.0.0 - in which case network stack chooses address/interface
 
-	var external bool
+	//var external bool
+	var remoteasn uint16
 
 	if holdtime < 3 {
 		holdtime = 10
@@ -375,9 +376,9 @@ func (s *Session) try(routerid IP, peer string, updates chan _update) (bool, not
 	}
 
 	updateTemplate := advert{
-		IPv6:          ipv6,
-		ASNumber:      asnumber,
-		External:      external,
+		IPv6:     ipv6,
+		ASNumber: asnumber,
+		//External:      external,
 		NextHop:       nexthop4,
 		NextHop6:      nexthop6,
 		Multiprotocol: multiprotocol,
@@ -435,15 +436,16 @@ func (s *Session) try(routerid IP, peer string, updates chan _update) (bool, not
 				hold_timer.Reset(hold_time_ns)
 				keepalive_timer.Reset(keepalive_time_ns)
 
-				external = o.asNumber != asnumber
+				//external = o.asNumber != asnumber
+				remoteasn = o.asNumber
 
-				s.established(holdtime, asnumber, o.asNumber)
+				s.established(holdtime, asnumber, remoteasn)
 
 				conn.queue(&keepalive{})
 
 				t := time.Now()
 				p := s.update.Parameters
-				u := updateTemplate.withParameters(p)
+				u := updateTemplate.withParameters(p, remoteasn)
 
 				// initial NLRI will simply advertise any initial addresses in the RIB
 				//adjRIBOut, nlri = NLRI(s.update.adjRIBOut(ipv6), nil, false)
@@ -481,7 +483,7 @@ func (s *Session) try(routerid IP, peer string, updates chan _update) (bool, not
 			if s.status.State == ESTABLISHED {
 				t := time.Now()
 				p := r.Parameters
-				u := updateTemplate.withParameters(p)
+				u := updateTemplate.withParameters(p, remoteasn)
 
 				// calculate NLRI to transmit - force re-advertisement if parameters have changed (MED, local-pref, communities)
 				//adjRIBOut, nlri = NLRI(r.adjRIBOut(ipv6), adjRIBOut, parameters.Diff(p))
