@@ -32,22 +32,68 @@ import (
 	"time"
 )
 
-var client *http.Client
+//var client *http.Client
+var cache map[netip.Addr]*sni
+var mutex sync.Mutex
+
+type sni struct {
+	time   time.Time
+	client *http.Client
+}
+
+func cacheClient(addr netip.Addr) *http.Client {
+	mutex.Lock()
+	defer mutex.Unlock()
+
+	v, ok := cache[addr]
+
+	if !ok {
+		v = &sni{client: ipClient(addr)}
+		cache[addr] = v
+	}
+
+	v.time = time.Now()
+
+	return v.client
+}
 
 func init() {
-	client = &http.Client{
-		Timeout: time.Second * 2,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-		Transport: &http.Transport{
-			Dial: (&net.Dialer{
-				Timeout: 2 * time.Second,
-			}).Dial,
-			TLSHandshakeTimeout: 2 * time.Second,
-			TLSClientConfig:     &tls.Config{InsecureSkipVerify: true},
-		},
-	}
+
+	/*
+		client = &http.Client{
+			Timeout: time.Second * 2,
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+			Transport: &http.Transport{
+				Dial: (&net.Dialer{
+					Timeout: 2 * time.Second,
+				}).Dial,
+				TLSHandshakeTimeout: 2 * time.Second,
+				TLSClientConfig:     &tls.Config{InsecureSkipVerify: true},
+			},
+		}
+	*/
+
+	// intialise a cache of per-IP clients
+	cache = make(map[netip.Addr]*sni)
+
+	// periodically check if per-IP clients have been used recently and remove if they haven't
+	go func() {
+		ticker := time.NewTicker(time.Second * 20)
+		for {
+			<-ticker.C
+			mutex.Lock()
+			now := time.Now()
+			for k, v := range cache {
+				if now.Sub(v.time) > time.Minute {
+					v.client.CloseIdleConnections() // I don't know if this helps, but presumably can't hurt ...
+					delete(cache, k)
+				}
+			}
+			mutex.Unlock()
+		}
+	}()
 }
 
 type Service struct {
@@ -480,11 +526,13 @@ func (m *Mon) synProbe(addr netip.Addr, port uint16) (bool, string) {
 
 func (m *Mon) httpProbe(addr netip.Addr, port uint16, https bool, head bool, host, path string, expect ...int) (bool, string) {
 
-	if m.SNI {
-		return m.sniHttpProbe(addr, port, https, head, host, path, expect...)
-	}
+	//if m.SNI {
+	//	return m.sniHttpProbe(addr, port, https, head, host, path, expect...)
+	//}
 
-	defer client.CloseIdleConnections()
+	//defer client.CloseIdleConnections()
+
+	client := cacheClient(addr)
 
 	scheme := "http"
 	method := "GET"
@@ -636,22 +684,28 @@ func (m *Mon) sniHttpProbe(addr netip.Addr, port uint16, https bool, head bool, 
 	return false, resp.Status
 }
 
-func sniHost(addr string, ipaddr netip.Addr) string {
-	i := strings.LastIndex(addr, ":")
-	if i < 0 {
-		return addr
-	}
-
-	s := ipaddr.String()
-
-	if ipaddr.Is6() {
-		s = "[" + s + "]"
-	}
-
-	return s + addr[i:]
+func sniClient(host netip.Addr) *http.Client {
+	return ipClient(host)
 }
 
-func sniClient(host netip.Addr) *http.Client {
+// return an http.Client which will always dial the IP address given
+// in the argument regardless of the hostname in the URL
+func ipClient(host netip.Addr) *http.Client {
+
+	sniHost := func(addr string, ipaddr netip.Addr) string {
+		i := strings.LastIndex(addr, ":")
+		if i < 0 {
+			return addr
+		}
+
+		s := ipaddr.String()
+
+		if ipaddr.Is6() {
+			s = "[" + s + "]"
+		}
+
+		return s + addr[i:]
+	}
 
 	return &http.Client{
 		Timeout: time.Second * 2,
