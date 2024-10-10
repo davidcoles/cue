@@ -143,7 +143,7 @@ func (d *Director) Start(cfg []Service) error {
 	d.mon = &mon.Mon{
 		Notifier: d.Notifier,
 		Prober:   d.Prober,
-		SNI:      d.SNI,
+		//SNI:      d.SNI,
 	}
 
 	err := d.mon.Start(d.Address, nil)

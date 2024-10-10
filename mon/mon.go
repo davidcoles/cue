@@ -87,7 +87,7 @@ func init() {
 			now := time.Now()
 			for k, v := range cache {
 				if now.Sub(v.time) > time.Minute {
-					v.client.CloseIdleConnections() // I don't know if this helps, but presumably can't hurt ...
+					v.client.CloseIdleConnections()
 					delete(cache, k)
 				}
 			}
@@ -155,10 +155,11 @@ type Notifier interface {
 }
 
 type Mon struct {
-	C        chan bool
-	Prober   Prober
-	Notifier Notifier
-	SNI      bool
+	C                    chan bool  // Used to signal changes in monitored service status
+	Prober               Prober     // Override standard probing functionalitry
+	Notifier             Notifier   // For logging
+	CloseIdleConnections bool       // Call CloseIdleConnections on http.Client after probe if true
+	IPv4                 netip.Addr // IP address to use as source for SYN probes (optional)
 
 	services map[Instance]*state
 	syn      *SYN
@@ -172,6 +173,27 @@ func (m *Mon) Start(addr netip.Addr, services map[Instance]Target) error {
 	if addr != nul {
 		var err error
 		m.syn, err = Syn(addr, false)
+
+		if err != nil {
+			return err
+		}
+	}
+
+	m.Update(services)
+
+	return nil
+}
+
+// notifier Notifier, prober Prober
+
+func (m *Mon) Init(services map[Instance]Target) error {
+
+	m.C = make(chan bool, 1)
+
+	var nul netip.Addr
+	if m.IPv4 != nul {
+		var err error
+		m.syn, err = Syn(m.IPv4, false)
 
 		if err != nil {
 			return err
@@ -498,6 +520,24 @@ func (m *Mon) Probe(addr netip.Addr, c Check) (ok bool, s string) {
 	return
 }
 
+// in case the http/s check has no host defined, use the vip as the host portion in the url (for DSR checks)
+func (m *Mon) ProbeVIP(vip, addr netip.Addr, c Check) (ok bool, s string) {
+	switch c.Type {
+	case "http":
+		ok, s = m.httpProbeVIP(vip, addr, c.Port, false, bool(c.Method), c.Host, c.Path, c.Expect...)
+	case "https":
+		ok, s = m.httpProbeVIP(vip, addr, c.Port, true, bool(c.Method), c.Host, c.Path, c.Expect...)
+	case "syn":
+		ok, s = m.synProbe(addr, c.Port)
+	case "dns":
+		ok, s = m.dnsProbe(addr, c.Port, bool(c.Method))
+	default:
+		s = "Unknown check type"
+	}
+
+	return
+}
+
 func (m *Mon) dnsProbe(addr netip.Addr, port uint16, useTCP bool) (bool, string) {
 
 	if useTCP {
@@ -525,7 +565,18 @@ func (m *Mon) synProbe(addr netip.Addr, port uint16) (bool, string) {
 }
 
 func (m *Mon) httpProbe(addr netip.Addr, port uint16, https bool, head bool, host, path string, expect ...int) (bool, string) {
+	return m.httpProbeVIP(netip.Addr{}, addr, port, https, head, host, path, expect...)
+}
 
+func ipHost(addr netip.Addr) string {
+	if addr.Is6() {
+		// https://datatracker.ietf.org/doc/html/rfc6874
+		return "[" + strings.Replace(addr.String(), "%", "%25", -1) + "]"
+	}
+	return addr.String()
+}
+
+func (m *Mon) httpProbeVIP(vip, addr netip.Addr, port uint16, https bool, head bool, host, path string, expect ...int) (bool, string) {
 	//if m.SNI {
 	//	return m.sniHttpProbe(addr, port, https, head, host, path, expect...)
 	//}
@@ -533,6 +584,10 @@ func (m *Mon) httpProbe(addr netip.Addr, port uint16, https bool, head bool, hos
 	//defer client.CloseIdleConnections()
 
 	client := cacheClient(addr)
+
+	if m.CloseIdleConnections {
+		defer client.CloseIdleConnections()
+	}
 
 	scheme := "http"
 	method := "GET"
@@ -553,15 +608,28 @@ func (m *Mon) httpProbe(addr netip.Addr, port uint16, https bool, head bool, hos
 		return false, "Port is 0"
 	}
 
-	url := fmt.Sprintf("%s://%s:%d/%s", scheme, addr, port, path)
+	if host == "" {
+		if vip.IsValid() {
+			host = ipHost(vip)
+		} else {
+			host = ipHost(addr)
+		}
+	}
+
+	url := fmt.Sprintf("%s://%s:%d/%s", scheme, host, port, path)
+
+	if !https && port == 80 {
+		url = fmt.Sprintf("%s://%s/%s", scheme, host, path)
+	}
+
+	if https && port == 443 {
+		url = fmt.Sprintf("%s://%s/%s", scheme, host, path)
+	}
+
 	req, err := http.NewRequest(method, url, nil)
 
 	if err != nil {
 		return false, err.Error()
-	}
-
-	if host != "" {
-		req.Host = host
 	}
 
 	resp, err := client.Do(req)
@@ -584,7 +652,7 @@ func (m *Mon) httpProbe(addr netip.Addr, port uint16, https bool, head bool, hos
 		}
 	}
 
-	return false, resp.Status
+	return false, method + " " + url + " - " + resp.Status
 }
 
 // Actually, turns out that the below is needed for Microsoft ADFS probes:
